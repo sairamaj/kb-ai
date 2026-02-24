@@ -1,21 +1,46 @@
-import { useEffect, useRef } from 'react'
-import { useChat } from '../hooks/useChat'
+import { useEffect, useRef, useState } from 'react'
+import { useChat, streamChatReply } from '../hooks/useChat'
 import { MessageBubble } from './MessageBubble'
 import { ChatInput } from './ChatInput'
 import { EmptyState } from './EmptyState'
+import { TypingIndicator } from './TypingIndicator'
 
 export function ChatPage() {
-  const { messages, addMessage, clearMessages } = useChat()
+  const { messages, addMessage, appendToLastAssistant, clearMessages } = useChat()
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, isStreaming])
 
-  function handleSend(text: string) {
-    addMessage('user', text)
-    // CHAT-02 will replace this stub with a real streamed OpenAI call
-    addMessage('assistant', '(AI response coming in CHAT-02…)')
+  async function handleSend(text: string) {
+    setError(null)
+    const userMessage = addMessage('user', text)
+
+    // Snapshot the full context including the new user message
+    const context = [...messages, userMessage]
+
+    // Reserve an empty assistant bubble to stream tokens into
+    addMessage('assistant', '')
+    setIsStreaming(true)
+
+    await streamChatReply(
+      context,
+      (token) => appendToLastAssistant(token),
+      () => setIsStreaming(false),
+      (err) => {
+        setIsStreaming(false)
+        setError(err)
+      },
+    )
+  }
+
+  function handleNewChat() {
+    clearMessages()
+    setError(null)
+    setIsStreaming(false)
   }
 
   return (
@@ -29,7 +54,7 @@ export function ChatPage() {
           <span className="font-semibold text-sm">Prompt KB</span>
         </div>
         <button
-          onClick={clearMessages}
+          onClick={handleNewChat}
           disabled={messages.length === 0}
           className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded hover:bg-gray-800"
         >
@@ -46,6 +71,14 @@ export function ChatPage() {
             {messages.map((msg) => (
               <MessageBubble key={msg.id} message={msg} />
             ))}
+            {isStreaming && messages[messages.length - 1]?.role !== 'assistant' && (
+              <TypingIndicator />
+            )}
+            {error && (
+              <div className="text-xs text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">
+                {error}
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
         )}
@@ -53,7 +86,7 @@ export function ChatPage() {
 
       {/* Input bar */}
       <div className="flex-shrink-0 px-4 pb-4 pt-2 max-w-2xl mx-auto w-full">
-        <ChatInput onSend={handleSend} />
+        <ChatInput onSend={handleSend} disabled={isStreaming} />
         <p className="text-center text-xs text-gray-600 mt-2">
           Shift+Enter for a new line · Enter to send
         </p>

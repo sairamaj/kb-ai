@@ -7,10 +7,16 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     watch: {
-      // Windows Docker bind mounts don't propagate inotify events —
-      // polling is required for HMR to work reliably.
+      // Windows Docker bind mounts don't propagate inotify events so polling
+      // is required. Use a 2s interval with awaitWriteFinish to prevent the
+      // rapid phantom-change detections that were causing continuous HMR
+      // resets and wiping React state mid-stream.
       usePolling: true,
-      interval: 300,
+      interval: 2000,
+      awaitWriteFinish: {
+        stabilityThreshold: 500,
+        pollInterval: 200,
+      },
     },
     proxy: {
       '/api': {

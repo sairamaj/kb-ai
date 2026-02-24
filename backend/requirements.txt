@@ -2,6 +2,9 @@ fastapi==0.115.8
 uvicorn[standard]==0.34.0
 python-dotenv==1.0.1
 
+# AI
+openai==1.70.0
+
 # Database
 sqlalchemy[asyncio]==2.0.38
 asyncpg==0.30.0
