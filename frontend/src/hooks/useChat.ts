@@ -1,28 +1,42 @@
 import { useState, useCallback } from 'react'
 import { Message } from '../types/chat'
 
+const SYSTEM_PROMPT =
+  'You are a knowledgeable assistant helping a developer build their personal knowledge base. ' +
+  'Give clear, concise answers. Use markdown formatting (code blocks, bullet points) where it helps readability.'
+
 function makeId(): string {
   return crypto.randomUUID()
 }
 
-// Streams tokens from POST /api/chat/stream, calling onToken for each chunk
-// and onDone when the stream closes.
+export interface StreamContext {
+  messages: Pick<Message, 'role' | 'content'>[]
+  systemPrompt?: string
+}
+
+// Streams tokens from POST /api/chat/stream.
+// Sends the full conversation history so the model maintains multi-turn context.
 export async function streamChatReply(
-  messages: Pick<Message, 'role' | 'content'>[],
+  ctx: StreamContext,
   onToken: (token: string) => void,
   onDone: () => void,
   onError: (err: string) => void,
 ): Promise<void> {
-  console.log('[stream] sending request, messages:', messages.length)
+  // Build the message list: system prompt first, then conversation history.
+  // Filter out any empty assistant placeholders left by failed previous turns.
+  const systemMessage = ctx.systemPrompt ?? SYSTEM_PROMPT
+  const history = ctx.messages.filter((m) => m.content.trim().length > 0)
+  const payload = [
+    { role: 'system', content: systemMessage },
+    ...history,
+  ]
+
   let response: Response
   try {
     response = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
-        model: 'gpt-4o-mini',
-      }),
+      body: JSON.stringify({ messages: payload, model: 'gpt-4o-mini' }),
     })
   } catch {
     onError('Network error — could not reach the server.')
@@ -43,20 +57,12 @@ export async function streamChatReply(
 
   const decoder = new TextDecoder()
   let buffer = ''
-  let tokenCount = 0
-
-  console.log('[stream] reader started')
 
   while (true) {
     const { done, value } = await reader.read()
-    if (done) {
-      console.log('[stream] reader done, tokens received:', tokenCount)
-      break
-    }
+    if (done) break
 
-    const chunk = decoder.decode(value, { stream: true })
-    console.log('[stream] raw chunk:', JSON.stringify(chunk))
-    buffer += chunk
+    buffer += decoder.decode(value, { stream: true })
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? ''
 
@@ -64,17 +70,14 @@ export async function streamChatReply(
       if (!line.startsWith('data: ')) continue
       const payload = line.slice(6).trim()
       if (payload === '[DONE]') {
-        console.log('[stream] [DONE] received, calling onDone')
         onDone()
         return
       }
       try {
         const { token } = JSON.parse(payload) as { token: string }
-        tokenCount++
-        console.log('[stream] token #' + tokenCount + ':', JSON.stringify(token))
         onToken(token)
-      } catch (e) {
-        console.warn('[stream] failed to parse line:', line, e)
+      } catch {
+        // ignore malformed SSE lines
       }
     }
   }
@@ -95,13 +98,10 @@ export function useChat() {
       const copy = [...prev]
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i].role === 'assistant') {
-          const updated = { ...copy[i], content: copy[i].content + token }
-          copy[i] = updated
-          console.log('[state] assistant content now:', JSON.stringify(updated.content.slice(-30)))
+          copy[i] = { ...copy[i], content: copy[i].content + token }
           return copy
         }
       }
-      console.warn('[state] appendToLastAssistant: no assistant message found in', prev.length, 'messages')
       return copy
     })
   }, [])

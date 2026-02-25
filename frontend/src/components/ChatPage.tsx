@@ -19,15 +19,15 @@ export function ChatPage() {
     setError(null)
     const userMessage = addMessage('user', text)
 
-    // Snapshot the full context including the new user message
+    // Snapshot full conversation history + new user message as context.
+    // The empty assistant placeholder is added to the UI but excluded from
+    // the OpenAI payload (streamChatReply filters empty messages).
     const context = [...messages, userMessage]
-
-    // Reserve an empty assistant bubble to stream tokens into
     addMessage('assistant', '')
     setIsStreaming(true)
 
     await streamChatReply(
-      context,
+      { messages: context },
       (token) => appendToLastAssistant(token),
       () => setIsStreaming(false),
       (err) => {
