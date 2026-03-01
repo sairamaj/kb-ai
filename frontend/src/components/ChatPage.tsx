@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useChat, streamChatReply } from '../hooks/useChat'
+import { useAuth } from '../context/AuthContext'
 import { MessageBubble } from './MessageBubble'
 import { ChatInput } from './ChatInput'
 import { EmptyState } from './EmptyState'
@@ -7,6 +8,7 @@ import { TypingIndicator } from './TypingIndicator'
 
 export function ChatPage() {
   const { messages, addMessage, appendToLastAssistant, clearMessages } = useChat()
+  const { user, logout } = useAuth()
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -53,13 +55,24 @@ export function ChatPage() {
           </div>
           <span className="font-semibold text-sm">Prompt KB</span>
         </div>
-        <button
-          onClick={handleNewChat}
-          disabled={messages.length === 0}
-          className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded hover:bg-gray-800"
-        >
-          New chat
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleNewChat}
+            disabled={messages.length === 0}
+            className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded hover:bg-gray-800"
+          >
+            New chat
+          </button>
+          <div className="flex items-center gap-2 border-l border-gray-800 pl-3 ml-1">
+            <span className="text-sm text-gray-300">{user?.display_name}</span>
+            <button
+              onClick={logout}
+              className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              Sign out
+            </button>
+          </div>
+        </div>
       </header>
 
       {/* Message thread */}
