@@ -6,7 +6,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 import app.models  # noqa: F401, E402 — register models on Base.metadata
-from app.routers import auth, chat  # noqa: E402
+from app.routers import auth, chat, conversations  # noqa: E402
 
 app = FastAPI(title="Prompt KB API", version="0.1.0")
 
@@ -20,6 +20,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(chat.router)
+app.include_router(conversations.router)
 
 
 @app.get("/health")
