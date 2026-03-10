@@ -7,6 +7,7 @@ import { Message } from '../types/chat'
 interface Props {
   id: string
   onBack: () => void
+  onDeleted?: () => void
 }
 
 function formatDate(iso: string): string {
@@ -27,7 +28,7 @@ function toUiMessage(m: { id: string; role: string; content: string }): Message 
   }
 }
 
-export function ConversationDetailPage({ id, onBack }: Props) {
+export function ConversationDetailPage({ id, onBack, onDeleted }: Props) {
   const { user, logout } = useAuth()
 
   const [conv, setConv] = useState<ConversationDetail | null>(null)
@@ -55,6 +56,11 @@ export function ConversationDetailPage({ id, onBack }: Props) {
 
   // Patch-level error
   const [patchError, setPatchError] = useState<string | null>(null)
+
+  // Delete state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   // ---------------------------------------------------------------------------
   // Load
@@ -194,6 +200,26 @@ export function ConversationDetailPage({ id, onBack }: Props) {
     setVisibilitySaving(true)
     await patch({ visibility: next }, 'visibility')
     setVisibilitySaving(false)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Delete handler
+  // ---------------------------------------------------------------------------
+
+  async function deleteConversation() {
+    setIsDeleting(true)
+    setDeleteError(null)
+    try {
+      const res = await fetch(`/api/conversations/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error(`Delete failed (${res.status})`)
+      ;(onDeleted ?? onBack)()
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Delete failed.')
+      setIsDeleting(false)
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -378,6 +404,44 @@ export function ConversationDetailPage({ id, onBack }: Props) {
             {patchError && (
               <p className="text-xs text-red-400">{patchError}</p>
             )}
+
+            {/* Delete section */}
+            <div className="border-t border-gray-800 pt-4">
+              {!showDeleteConfirm ? (
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="text-sm text-red-500 hover:text-red-400 transition-colors"
+                >
+                  Delete conversation…
+                </button>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm text-gray-300">
+                    Permanently delete <span className="font-medium text-gray-100">"{conv.title}"</span> and all its messages?
+                  </p>
+                  {deleteError && (
+                    <p className="text-xs text-red-400">{deleteError}</p>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => { void deleteConversation() }}
+                      disabled={isDeleting}
+                      className="px-3 py-1.5 text-sm rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {isDeleting && <span className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />}
+                      Yes, delete
+                    </button>
+                    <button
+                      onClick={() => { setShowDeleteConfirm(false); setDeleteError(null) }}
+                      disabled={isDeleting}
+                      className="px-3 py-1.5 text-sm rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Editing hints */}

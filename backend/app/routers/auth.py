@@ -6,7 +6,7 @@ import uuid
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.auth import CurrentUser, create_access_token
 from app.config import (
@@ -251,3 +251,20 @@ async def logout() -> dict:
     resp = Response(content='{"ok": true}', media_type="application/json")
     resp.delete_cookie("access_token", path="/")
     return resp  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Delete account
+# ---------------------------------------------------------------------------
+
+@router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(current_user: CurrentUser) -> Response:
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(delete(User).where(User.id == uuid.UUID(current_user.sub)))
+        await db.commit()
+
+    resp = Response(status_code=status.HTTP_204_NO_CONTENT)
+    resp.delete_cookie("access_token", path="/")
+    return resp

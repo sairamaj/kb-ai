@@ -39,6 +39,7 @@ function AppShell() {
       <ConversationDetailPage
         id={page.id}
         onBack={() => setPage(backPage)}
+        onDeleted={() => setPage(backPage)}
       />
     )
   }

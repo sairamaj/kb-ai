@@ -6,6 +6,7 @@ interface AuthContextValue {
   user: AuthUser | null
   isLoading: boolean
   logout: () => Promise<void>
+  deleteAccount: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -33,8 +34,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.href = '/'
   }
 
+  async function deleteAccount() {
+    const res = await fetch('/api/auth/account', { method: 'DELETE', credentials: 'include' })
+    if (!res.ok) throw new Error(`Delete failed (${res.status})`)
+    queryClient.setQueryData(['me'], null)
+    queryClient.clear()
+    window.location.href = '/'
+  }
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, logout, deleteAccount }}>
       {children}
     </AuthContext.Provider>
   )

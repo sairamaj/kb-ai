@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -193,18 +194,21 @@ async def list_conversations(
     db: AsyncSession = Depends(get_db),
     q: str = "",
     tags: list[str] = Query(default=[]),
+    sort: Literal["recent", "oldest", "most_replayed"] = "recent",
     limit: int = 50,
     offset: int = 0,
 ) -> list[ConversationResponse]:
     """
-    List the authenticated user's conversations with optional keyword search
-    and tag filtering.
+    List the authenticated user's conversations with optional keyword search,
+    tag filtering, and sorting.
 
     - ``q`` performs full-text search against conversation title/tags
       (via the GIN-indexed ``search_vector`` generated column) **and** against
       message content (via an inline ``to_tsvector`` subquery).
     - ``tags`` filters to conversations whose tags array overlaps the given set.
-    Both parameters can be combined.
+    - ``sort`` controls ordering: ``recent`` (default), ``oldest``, or
+      ``most_replayed``.
+    All parameters can be combined.
     """
     owner_uuid = uuid.UUID(current_user.sub)
 
@@ -235,7 +239,12 @@ async def list_conversations(
         )
         stmt = stmt.where(or_(conv_match, Conversation.id.in_(msg_subq)))
 
-    stmt = stmt.order_by(Conversation.updated_at.desc()).limit(limit).offset(offset)
+    _sort_clause = {
+        "recent": Conversation.updated_at.desc(),
+        "oldest": Conversation.updated_at.asc(),
+        "most_replayed": Conversation.replay_count.desc(),
+    }[sort]
+    stmt = stmt.order_by(_sort_clause).limit(limit).offset(offset)
 
     rows = (await db.execute(stmt)).all()
     return [
@@ -264,6 +273,23 @@ async def get_conversation(
     if conv is None or str(conv.owner_id) != current_user.sub:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return _to_detail_response(conv)
+
+
+@router.delete("/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    conv_uuid = _parse_uuid(conversation_id)
+    result = await db.execute(
+        select(Conversation).where(Conversation.id == conv_uuid)
+    )
+    conv = result.scalar_one_or_none()
+    if conv is None or str(conv.owner_id) != current_user.sub:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await db.delete(conv)
+    await db.commit()
 
 
 @router.patch("/{conversation_id}", response_model=ConversationDetailResponse)
