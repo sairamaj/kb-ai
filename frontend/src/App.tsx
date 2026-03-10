@@ -3,10 +3,12 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import { LoginPage } from './pages/LoginPage'
 import { ChatPage } from './components/ChatPage'
 import { ConversationDetailPage } from './components/ConversationDetailPage'
+import { LibraryPage } from './components/LibraryPage'
 
 type AppPage =
   | { name: 'chat' }
-  | { name: 'conversation'; id: string }
+  | { name: 'library' }
+  | { name: 'conversation'; id: string; from: 'chat' | 'library' }
 
 function AppShell() {
   const { user, isLoading } = useAuth()
@@ -22,18 +24,29 @@ function AppShell() {
 
   if (!user) return <LoginPage />
 
+  if (page.name === 'library') {
+    return (
+      <LibraryPage
+        onBack={() => setPage({ name: 'chat' })}
+        onOpenConversation={(id) => setPage({ name: 'conversation', id, from: 'library' })}
+      />
+    )
+  }
+
   if (page.name === 'conversation') {
+    const backPage: AppPage = page.from === 'library' ? { name: 'library' } : { name: 'chat' }
     return (
       <ConversationDetailPage
         id={page.id}
-        onBack={() => setPage({ name: 'chat' })}
+        onBack={() => setPage(backPage)}
       />
     )
   }
 
   return (
     <ChatPage
-      onOpenConversation={(id: string) => setPage({ name: 'conversation', id })}
+      onOpenConversation={(id: string) => setPage({ name: 'conversation', id, from: 'chat' })}
+      onOpenLibrary={() => setPage({ name: 'library' })}
     />
   )
 }

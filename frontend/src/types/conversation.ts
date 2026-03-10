@@ -5,6 +5,17 @@ export interface ConversationMessage {
   created_at: string
 }
 
+export interface ConversationSummary {
+  id: string
+  title: string
+  tags: string[]
+  model: string
+  visibility: 'public' | 'private'
+  message_count: number
+  created_at: string
+  updated_at: string
+}
+
 export interface ConversationDetail {
   id: string
   title: string

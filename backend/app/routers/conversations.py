@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -39,6 +39,7 @@ class ConversationResponse(BaseModel):
     visibility: str
     message_count: int
     created_at: str
+    updated_at: str
 
 
 class MessageResponse(BaseModel):
@@ -166,7 +167,90 @@ async def save_conversation(
         visibility=conversation.visibility,
         message_count=len(msgs),
         created_at=conversation.created_at.isoformat(),
+        updated_at=conversation.updated_at.isoformat(),
     )
+
+
+@router.get("/tags", response_model=list[str])
+async def list_tags(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> list[str]:
+    """Return all distinct tags used across the current user's conversations."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    result = await db.execute(
+        select(func.unnest(Conversation.tags).label("tag"))
+        .where(Conversation.owner_id == owner_uuid)
+        .distinct()
+        .order_by("tag")
+    )
+    return [row.tag for row in result.all()]
+
+
+@router.get("", response_model=list[ConversationResponse])
+async def list_conversations(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    q: str = "",
+    tags: list[str] = Query(default=[]),
+    limit: int = 50,
+    offset: int = 0,
+) -> list[ConversationResponse]:
+    """
+    List the authenticated user's conversations with optional keyword search
+    and tag filtering.
+
+    - ``q`` performs full-text search against conversation title/tags
+      (via the GIN-indexed ``search_vector`` generated column) **and** against
+      message content (via an inline ``to_tsvector`` subquery).
+    - ``tags`` filters to conversations whose tags array overlaps the given set.
+    Both parameters can be combined.
+    """
+    owner_uuid = uuid.UUID(current_user.sub)
+
+    msg_count_sq = (
+        select(func.count(Message.id))
+        .where(Message.conversation_id == Conversation.id)
+        .correlate(Conversation)
+        .scalar_subquery()
+    )
+
+    stmt = (
+        select(Conversation, msg_count_sq.label("message_count"))
+        .where(Conversation.owner_id == owner_uuid)
+    )
+
+    if tags:
+        stmt = stmt.where(Conversation.tags.overlap(tags))
+
+    q = q.strip()
+    if q:
+        ts_q = func.plainto_tsquery("english", q)
+        # Use the GIN-indexed generated column for title + tags match.
+        conv_match = literal_column("search_vector").op("@@")(ts_q)
+        # Subquery for message-content match (sequential scan on messages,
+        # acceptable for v1 scale).
+        msg_subq = select(Message.conversation_id).where(
+            func.to_tsvector("english", Message.content).op("@@")(ts_q)
+        )
+        stmt = stmt.where(or_(conv_match, Conversation.id.in_(msg_subq)))
+
+    stmt = stmt.order_by(Conversation.updated_at.desc()).limit(limit).offset(offset)
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        ConversationResponse(
+            id=str(conv.id),
+            title=conv.title,
+            tags=conv.tags or [],
+            model=conv.model,
+            visibility=conv.visibility,
+            message_count=msg_count,
+            created_at=conv.created_at.isoformat(),
+            updated_at=conv.updated_at.isoformat(),
+        )
+        for conv, msg_count in rows
+    ]
 
 
 @router.get("/{conversation_id}", response_model=ConversationDetailResponse)

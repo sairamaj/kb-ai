@@ -9,9 +9,10 @@ import { SaveDialog } from './SaveDialog'
 
 interface Props {
   onOpenConversation: (id: string) => void
+  onOpenLibrary: () => void
 }
 
-export function ChatPage({ onOpenConversation }: Props) {
+export function ChatPage({ onOpenConversation, onOpenLibrary }: Props) {
   const { messages, addMessage, appendToLastAssistant, clearMessages, clearDraft, hasDraft } = useChat()
   const { user, logout } = useAuth()
   const [isStreaming, setIsStreaming] = useState(false)
@@ -130,6 +131,12 @@ export function ChatPage({ onOpenConversation }: Props) {
             className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded hover:bg-gray-800"
           >
             New chat
+          </button>
+          <button
+            onClick={onOpenLibrary}
+            className="text-xs text-gray-400 hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-800"
+          >
+            Library
           </button>
           <div className="flex items-center gap-2 border-l border-gray-800 pl-3 ml-1">
             <span className="text-sm text-gray-300">{user?.display_name}</span>
