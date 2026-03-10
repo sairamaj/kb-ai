@@ -7,14 +7,20 @@ import { EmptyState } from './EmptyState'
 import { TypingIndicator } from './TypingIndicator'
 import { SaveDialog } from './SaveDialog'
 
-export function ChatPage() {
-  const { messages, addMessage, appendToLastAssistant, clearMessages } = useChat()
+interface Props {
+  onOpenConversation: (id: string) => void
+}
+
+export function ChatPage({ onOpenConversation }: Props) {
+  const { messages, addMessage, appendToLastAssistant, clearMessages, clearDraft, hasDraft } = useChat()
   const { user, logout } = useAuth()
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [savedConversationId, setSavedConversationId] = useState<string | null>(null)
+  const [showDraftNotice, setShowDraftNotice] = useState(hasDraft)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -48,6 +54,8 @@ export function ChatPage() {
     setError(null)
     setIsStreaming(false)
     setSaveSuccess(false)
+    setSavedConversationId(null)
+    setShowDraftNotice(false)
   }
 
   // Derive a default title from the first user message.
@@ -83,8 +91,12 @@ export function ChatPage() {
         throw new Error(`Save failed (${res.status}): ${text}`)
       }
 
+      const saved = await res.json() as { id: string }
+      clearDraft()
       setShowSaveDialog(false)
       setSaveSuccess(true)
+      setSavedConversationId(saved.id)
+      setShowDraftNotice(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed.')
       setShowSaveDialog(false)
@@ -137,9 +149,29 @@ export function ChatPage() {
           <EmptyState />
         ) : (
           <div className="max-w-2xl mx-auto flex flex-col gap-4">
+            {showDraftNotice && (
+              <div className="flex items-center justify-between text-xs text-amber-400 bg-amber-900/20 border border-amber-800 rounded-lg px-3 py-2">
+                <span>Draft restored — your previous conversation was recovered.</span>
+                <button
+                  onClick={() => setShowDraftNotice(false)}
+                  className="ml-4 text-amber-500 hover:text-amber-300 transition-colors shrink-0"
+                  aria-label="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {saveSuccess && (
-              <div className="text-xs text-green-400 bg-green-900/20 border border-green-800 rounded-lg px-3 py-2">
-                Conversation saved to your knowledge base.
+              <div className="flex items-center justify-between text-xs text-green-400 bg-green-900/20 border border-green-800 rounded-lg px-3 py-2">
+                <span>Conversation saved to your knowledge base.</span>
+                {savedConversationId && (
+                  <button
+                    onClick={() => onOpenConversation(savedConversationId)}
+                    className="ml-4 text-green-300 hover:text-green-100 underline underline-offset-2 transition-colors shrink-0"
+                  >
+                    View / Edit details →
+                  </button>
+                )}
               </div>
             )}
             {messages.map((msg) => (

@@ -1,12 +1,30 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Message } from '../types/chat'
 
 const SYSTEM_PROMPT =
   'You are a knowledgeable assistant helping a developer build their personal knowledge base. ' +
   'Give clear, concise answers. Use markdown formatting (code blocks, bullet points) where it helps readability.'
 
+const DRAFT_KEY = 'kb_draft_conversation'
+
 function makeId(): string {
   return crypto.randomUUID()
+}
+
+function loadDraft(): Message[] {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as Array<{ id: string; role: string; content: string; createdAt: string }>
+    return parsed.map((m) => ({
+      id: m.id,
+      role: m.role as Message['role'],
+      content: m.content,
+      createdAt: new Date(m.createdAt),
+    }))
+  } catch {
+    return []
+  }
 }
 
 export interface StreamContext {
@@ -85,9 +103,23 @@ export async function streamChatReply(
 }
 
 export function useChat() {
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<Message[]>(() => loadDraft())
+  // When true, the effect skips writing to localStorage (used after an explicit save).
+  const skipPersistRef = useRef(false)
+  // True when the initial state was restored from a non-empty draft.
+  const hasDraft = messages.length > 0
+
+  useEffect(() => {
+    if (skipPersistRef.current) return
+    if (messages.length === 0) {
+      localStorage.removeItem(DRAFT_KEY)
+    } else {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(messages))
+    }
+  }, [messages])
 
   const addMessage = useCallback((role: Message['role'], content: string): Message => {
+    skipPersistRef.current = false
     const msg: Message = { id: makeId(), role, content, createdAt: new Date() }
     setMessages((prev) => [...prev, msg])
     return msg
@@ -106,7 +138,18 @@ export function useChat() {
     })
   }, [])
 
-  const clearMessages = useCallback(() => setMessages([]), [])
+  const clearMessages = useCallback(() => {
+    skipPersistRef.current = false
+    localStorage.removeItem(DRAFT_KEY)
+    setMessages([])
+  }, [])
 
-  return { messages, addMessage, appendToLastAssistant, clearMessages }
+  // Removes the draft from localStorage without clearing the visible messages.
+  // Call this after a successful explicit save so a page refresh starts fresh.
+  const clearDraft = useCallback(() => {
+    skipPersistRef.current = true
+    localStorage.removeItem(DRAFT_KEY)
+  }, [])
+
+  return { messages, addMessage, appendToLastAssistant, clearMessages, clearDraft, hasDraft }
 }
