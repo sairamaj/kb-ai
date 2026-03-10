@@ -113,7 +113,7 @@ All PKs are UUID v4. `Conversation.tags` is a PostgreSQL `ARRAY(String)`. `Conve
 User stories are in `stories.md`, organized by phase. Requirements are in `requirements.md`. Implementation phases:
 1. Foundation (INFRA, CHAT) — **done**
 2. Auth & Save (AUTH, SAVE) — AUTH-01 done
-3. Library (LIB)
+3. Library (LIB) — LIB-01 done, LIB-02 done
 4. Replay Mode (REPLAY)
 5. Public Sharing (SHARE)
 6. Collections (COL)
