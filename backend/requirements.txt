@@ -12,3 +12,4 @@ openai==1.70.0
 sqlalchemy[asyncio]==2.0.38
 asyncpg==0.30.0
 alembic==1.14.1
+pgvector==0.3.6

@@ -14,6 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from app.database import Base
 
@@ -82,6 +83,8 @@ class Conversation(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    # OpenAI embedding for semantic search (text-embedding-3-small, 1536 dimensions)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
 
     owner: Mapped["User"] = relationship("User", back_populates="conversations")
     messages: Mapped[list["Message"]] = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")

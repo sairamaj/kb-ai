@@ -1,4 +1,8 @@
-"""add search vector to conversations
+"""add search vector to conversations (SEARCH-01)
+
+Adds a tsvector column and GIN index for full-text search on title and tags.
+The column is maintained by a trigger (not GENERATED ALWAYS AS) because
+array_to_string() is STABLE and cannot be used in a generated expression.
 
 Revision ID: 0002
 Revises: 0001

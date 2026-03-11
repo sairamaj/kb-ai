@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.auth import CurrentUser
 from app.database import get_db
 from app.models import Collection, Conversation, ConversationCollection, Message, MessageRole, Visibility
+from app.openai_client import embed_text, has_openai_key
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -43,6 +44,7 @@ class ConversationResponse(BaseModel):
     created_at: str
     updated_at: str
     collection_ids: list[str] = []
+    similarity: float | None = None  # Present when search_mode=semantic
 
 
 class MessageResponse(BaseModel):
@@ -88,6 +90,13 @@ class UpdateConversationRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _text_for_embedding(title: str, tags: list[str], message_contents: list[str]) -> str:
+    """Build a single text blob for embedding from conversation metadata and messages."""
+    parts = [title or "", " ".join(tags or [])]
+    parts.extend(message_contents or [])
+    return " ".join(p.strip() for p in parts if p and p.strip())
+
 
 async def _fetch_conversation(
     conv_uuid: uuid.UUID,
@@ -190,6 +199,16 @@ async def save_conversation(
             content=m.content,
         ))
 
+    # Generate and store embedding for semantic search when OpenAI is configured.
+    text_to_embed = _text_for_embedding(
+        title,
+        body.tags,
+        [m.content for m in msgs],
+    )
+    embedding = await embed_text(text_to_embed)
+    if embedding is not None:
+        conversation.embedding = embedding
+
     await db.commit()
     await db.refresh(conversation)
 
@@ -204,6 +223,7 @@ async def save_conversation(
         created_at=conversation.created_at.isoformat(),
         updated_at=conversation.updated_at.isoformat(),
         collection_ids=[],
+        similarity=None,
     )
 
 
@@ -228,6 +248,7 @@ async def list_conversations(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     q: str = "",
+    search_mode: Literal["keyword", "semantic"] = Query(default="keyword", description="Keyword (full-text) or semantic (embedding similarity) search"),
     tags: list[str] = Query(default=[]),
     collection_id: str | None = Query(default=None, description="Filter to conversations in this collection"),
     sort: Literal["recent", "oldest", "most_replayed"] = "recent",
@@ -235,16 +256,16 @@ async def list_conversations(
     offset: int = 0,
 ) -> list[ConversationResponse]:
     """
-    List the authenticated user's conversations with optional keyword search,
+    List the authenticated user's conversations with optional keyword or semantic search,
     tag filtering, collection filter, and sorting.
 
-    - ``q`` performs full-text search against conversation title/tags
-      (via the GIN-indexed ``search_vector`` generated column) **and** against
-      message content (via an inline ``to_tsvector`` subquery).
+    - ``q``: search query. With ``search_mode=keyword`` (default) performs full-text search
+      against title/tags and message content. With ``search_mode=semantic`` converts ``q`` to
+      an embedding and ranks by cosine similarity (requires OPENAI_API_KEY).
     - ``tags`` filters to conversations whose tags array overlaps the given set.
     - ``collection_id`` filters to conversations that belong to the given collection.
-    - ``sort`` controls ordering: ``recent`` (default), ``oldest``, or
-      ``most_replayed``.
+    - ``sort`` controls ordering when not using semantic search: ``recent`` (default),
+      ``oldest``, or ``most_replayed``.
     All parameters can be combined.
     """
     owner_uuid = uuid.UUID(current_user.sub)
@@ -266,6 +287,65 @@ async def list_conversations(
         .correlate(Conversation)
         .scalar_subquery()
     )
+
+    q = q.strip()
+    semantic_search = search_mode == "semantic" and q
+    if semantic_search:
+        if not has_openai_key():
+            raise HTTPException(
+                status_code=503,
+                detail="Semantic search requires OPENAI_API_KEY to be configured",
+            )
+        query_embedding = await embed_text(q)
+        if query_embedding is None:
+            raise HTTPException(status_code=503, detail="Failed to generate search embedding")
+        # Similarity = 1 - cosine_distance (so higher is more similar)
+        similarity_expr = (1 - Conversation.embedding.cosine_distance(query_embedding)).label("similarity")
+        stmt = (
+            select(Conversation, msg_count_sq.label("message_count"), similarity_expr)
+            .where(
+                Conversation.owner_id == owner_uuid,
+                Conversation.embedding.isnot(None),
+            )
+        )
+        if collection_id is not None:
+            stmt = stmt.where(
+                Conversation.id.in_(
+                    select(ConversationCollection.conversation_id).where(
+                        ConversationCollection.collection_id == col_uuid
+                    )
+                )
+            )
+        if tags:
+            stmt = stmt.where(Conversation.tags.overlap(tags))
+        stmt = stmt.order_by(literal_column("similarity").desc()).limit(limit).offset(offset)
+        rows = (await db.execute(stmt)).all()
+        conv_ids = [row[0].id for row in rows]
+        collection_map: dict[uuid.UUID, list[str]] = {cid: [] for cid in conv_ids}
+        if conv_ids:
+            cc_result = await db.execute(
+                select(ConversationCollection.conversation_id, ConversationCollection.collection_id).where(
+                    ConversationCollection.conversation_id.in_(conv_ids)
+                )
+            )
+            for conv_id, col_id in cc_result.all():
+                collection_map[conv_id].append(str(col_id))
+        return [
+            ConversationResponse(
+                id=str(row[0].id),
+                title=row[0].title,
+                tags=row[0].tags or [],
+                model=row[0].model,
+                visibility=row[0].visibility,
+                message_count=row[1],
+                replay_count=row[0].replay_count,
+                created_at=row[0].created_at.isoformat(),
+                updated_at=row[0].updated_at.isoformat(),
+                collection_ids=collection_map.get(row[0].id, []),
+                similarity=round(row[2], 4) if row[2] is not None else None,
+            )
+            for row in rows
+        ]
 
     stmt = (
         select(Conversation, msg_count_sq.label("message_count"))
@@ -295,18 +375,25 @@ async def list_conversations(
             func.to_tsvector("english", Message.content).op("@@")(ts_q)
         )
         stmt = stmt.where(or_(conv_match, Conversation.id.in_(msg_subq)))
+        # Rank by relevance when searching (SEARCH-01).
+        rank_expr = func.ts_rank(literal_column("search_vector"), ts_q)
+        stmt = stmt.add_columns(rank_expr.label("_rank"))
 
     _sort_clause = {
         "recent": Conversation.updated_at.desc(),
         "oldest": Conversation.updated_at.asc(),
         "most_replayed": Conversation.replay_count.desc(),
     }[sort]
-    stmt = stmt.order_by(_sort_clause).limit(limit).offset(offset)
+    if q:
+        stmt = stmt.order_by(literal_column("_rank").desc().nulls_last(), _sort_clause)
+    else:
+        stmt = stmt.order_by(_sort_clause)
+    stmt = stmt.limit(limit).offset(offset)
 
     rows = (await db.execute(stmt)).all()
 
     # Load collection_ids for all listed conversations
-    conv_ids = [conv.id for conv, _ in rows]
+    conv_ids = [row[0].id for row in rows]
     collection_map: dict[uuid.UUID, list[str]] = {cid: [] for cid in conv_ids}
     if conv_ids:
         cc_result = await db.execute(
@@ -329,8 +416,9 @@ async def list_conversations(
             created_at=conv.created_at.isoformat(),
             updated_at=conv.updated_at.isoformat(),
             collection_ids=collection_map.get(conv.id, []),
+            similarity=None,
         )
-        for conv, msg_count in rows
+        for conv, msg_count in ((row[0], row[1]) for row in rows)
     ]
 
 
@@ -446,6 +534,14 @@ async def update_conversation(
         conv.visibility = Visibility(body.visibility)
 
     conv.updated_at = datetime.now(timezone.utc)
+
+    # Recompute embedding when title or tags change so semantic search stays accurate.
+    if body.title is not None or body.tags is not None:
+        message_contents = [m.content for m in conv.messages]
+        text_to_embed = _text_for_embedding(conv.title, conv.tags or [], message_contents)
+        new_embedding = await embed_text(text_to_embed)
+        if new_embedding is not None:
+            conv.embedding = new_embedding
 
     await db.commit()
 

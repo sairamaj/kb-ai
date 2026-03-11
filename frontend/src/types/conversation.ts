@@ -16,6 +16,8 @@ export interface ConversationSummary {
   created_at: string
   updated_at: string
   collection_ids: string[]
+  /** Present when search_mode=semantic; 0–1 similarity score */
+  similarity?: number
 }
 
 export interface ConversationDetail {

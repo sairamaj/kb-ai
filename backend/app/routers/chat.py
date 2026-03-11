@@ -1,5 +1,4 @@
 import json
-import os
 from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
@@ -7,19 +6,9 @@ from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+from app.openai_client import get_openai_client
+
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-_client: AsyncOpenAI | None = None
-
-
-def get_openai_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        if not api_key:
-            raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured")
-        _client = AsyncOpenAI(api_key=api_key)
-    return _client
 
 
 class ChatMessage(BaseModel):

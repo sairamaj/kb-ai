@@ -7,8 +7,12 @@ from typing import Annotated
 import jwt
 from fastapi import Cookie, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import JWT_ALGORITHM, JWT_EXPIRY_SECONDS, SECRET_KEY
+from app.database import get_db
+from app.models import User
 
 
 class TokenPayload(BaseModel):
@@ -45,12 +49,25 @@ def _verify_token(token: str) -> TokenPayload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
 
-def get_current_user(
+async def get_current_user(
     access_token: Annotated[str | None, Cookie()] = None,
+    db: AsyncSession = Depends(get_db),
 ) -> TokenPayload:
     if not access_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return _verify_token(access_token)
+    payload = _verify_token(access_token)
+
+    # Ensure the user still exists in the database (handles DB resets / stale cookies).
+    try:
+        user_id = uuid.UUID(payload.sub)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+
+    result = await db.execute(select(User.id).where(User.id == user_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found; please log in again")
+
+    return payload
 
 
 CurrentUser = Annotated[TokenPayload, Depends(get_current_user)]

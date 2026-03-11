@@ -5,6 +5,7 @@ import type { ConversationSummary } from '../types/conversation'
 
 type LibraryView = 'conversations' | 'collections'
 type SortOption = 'recent' | 'oldest' | 'most_replayed'
+type SearchMode = 'keyword' | 'semantic'
 
 const SORT_LABELS: Record<SortOption, string> = {
   recent: 'Most Recent',
@@ -13,6 +14,11 @@ const SORT_LABELS: Record<SortOption, string> = {
 }
 
 const SORT_OPTIONS: SortOption[] = ['recent', 'oldest', 'most_replayed']
+
+const SEARCH_MODE_LABELS: Record<SearchMode, string> = {
+  keyword: 'Keyword',
+  semantic: 'Semantic',
+}
 
 const SESSION_KEY = 'kb_library_sort'
 
@@ -36,6 +42,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
   const [libraryView, setLibraryView] = useState<LibraryView>('conversations')
 
   const [query, setQuery] = useState('')
+  const [searchMode, setSearchMode] = useState<SearchMode>('keyword')
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [allTags, setAllTags] = useState<string[]>([])
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
@@ -84,6 +91,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
     setError(null)
     const params = new URLSearchParams()
     if (debouncedQuery) params.set('q', debouncedQuery)
+    params.set('search_mode', searchMode)
     selectedTags.forEach((t) => params.append('tags', t))
     if (selectedCollectionId) params.set('collection_id', selectedCollectionId)
     params.set('sort', sort)
@@ -101,7 +109,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
         setError(err instanceof Error ? err.message : 'Failed to load conversations.')
         setIsLoading(false)
       })
-  }, [debouncedQuery, selectedTags, selectedCollectionId, sort])
+  }, [debouncedQuery, searchMode, selectedTags, selectedCollectionId, sort])
 
   useEffect(() => {
     setCollectionsLoading(true)
@@ -367,7 +375,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
             </svg>
             <input
               type="text"
-              placeholder="Search by title or content…"
+              placeholder={searchMode === 'semantic' ? 'Search by meaning…' : 'Search by title or content…'}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-9 pr-9 py-2 text-sm placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 transition-colors"
@@ -381,6 +389,27 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                 ✕
               </button>
             )}
+          </div>
+
+          {/* Search mode: Keyword vs Semantic */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Search:</span>
+            <div className="flex items-center gap-1 bg-gray-900 border border-gray-700 rounded-lg p-0.5">
+              {(['keyword', 'semantic'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setSearchMode(mode)}
+                  className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
+                    searchMode === mode
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  {SEARCH_MODE_LABELS[mode]}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Sort + tag filter row */}
@@ -599,6 +628,11 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                         <p className="text-xs text-gray-600 mt-0.5">
                           {conv.message_count} msg{conv.message_count !== 1 ? 's' : ''}
                         </p>
+                        {conv.similarity != null && (
+                          <p className="text-xs text-emerald-500 mt-0.5" title="Similarity score">
+                            {Math.round(conv.similarity * 100)}% match
+                          </p>
+                        )}
                         {conv.replay_count > 0 && (
                           <p className="text-xs text-indigo-500 mt-0.5" title="Times replayed">
                             ▶ {conv.replay_count}
