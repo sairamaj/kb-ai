@@ -63,6 +63,20 @@ class ConversationDetailResponse(BaseModel):
     messages: list[MessageResponse]
 
 
+class PublicConversationDetailResponse(BaseModel):
+    id: str
+    title: str
+    tags: list[str]
+    model: str
+    visibility: str
+    replay_count: int
+    created_at: str
+    updated_at: str
+    messages: list[MessageResponse]
+    author_name: str
+    author_avatar: str | None
+
+
 class UpdateConversationRequest(BaseModel):
     title: str | None = None
     tags: list[str] | None = None
@@ -81,6 +95,18 @@ async def _fetch_conversation(
         select(Conversation)
         .where(Conversation.id == conv_uuid)
         .options(selectinload(Conversation.messages))
+    )
+    return result.scalar_one_or_none()
+
+
+async def _fetch_conversation_with_owner(
+    conv_uuid: uuid.UUID,
+    db: AsyncSession,
+) -> Conversation | None:
+    result = await db.execute(
+        select(Conversation)
+        .where(Conversation.id == conv_uuid)
+        .options(selectinload(Conversation.messages), selectinload(Conversation.owner))
     )
     return result.scalar_one_or_none()
 
@@ -276,6 +302,42 @@ async def get_conversation(
     if conv is None or str(conv.owner_id) != current_user.sub:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return _to_detail_response(conv)
+
+
+@router.get("/{conversation_id}/public", response_model=PublicConversationDetailResponse)
+async def get_public_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> PublicConversationDetailResponse:
+    """Return a conversation that is marked public. No authentication required.
+    Returns 403 if the conversation exists but is private."""
+    conv_uuid = _parse_uuid(conversation_id)
+    conv = await _fetch_conversation_with_owner(conv_uuid, db)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.visibility != Visibility.public:
+        raise HTTPException(status_code=403, detail="This conversation is private")
+    return PublicConversationDetailResponse(
+        id=str(conv.id),
+        title=conv.title,
+        tags=conv.tags or [],
+        model=conv.model,
+        visibility=conv.visibility,
+        replay_count=conv.replay_count,
+        created_at=conv.created_at.isoformat(),
+        updated_at=conv.updated_at.isoformat(),
+        messages=[
+            MessageResponse(
+                id=str(m.id),
+                role=m.role,
+                content=m.content,
+                created_at=m.created_at.isoformat(),
+            )
+            for m in conv.messages
+        ],
+        author_name=conv.owner.display_name,
+        author_avatar=conv.owner.avatar_url,
+    )
 
 
 @router.delete("/{conversation_id}", status_code=204)

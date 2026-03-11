@@ -16,25 +16,58 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add a GENERATED ALWAYS AS STORED tsvector column that indexes
-    # title + tags for fast GIN-based full-text search.
+    # array_to_string() is STABLE, not IMMUTABLE, so PostgreSQL rejects it
+    # in a GENERATED ALWAYS AS expression. Use a plain tsvector column kept
+    # current by a trigger instead.
     op.execute("""
         ALTER TABLE conversations
         ADD COLUMN IF NOT EXISTS search_vector tsvector
-        GENERATED ALWAYS AS (
-            to_tsvector(
-                'english',
-                coalesce(title, '') || ' ' ||
-                coalesce(array_to_string(tags, ' '), '')
-            )
-        ) STORED
     """)
+
+    # Backfill existing rows.
+    op.execute("""
+        UPDATE conversations
+        SET search_vector = to_tsvector(
+            'english'::regconfig,
+            coalesce(title, '') || ' ' ||
+            coalesce(array_to_string(tags, ' '), '')
+        )
+    """)
+
     op.execute("""
         CREATE INDEX IF NOT EXISTS idx_conv_search
         ON conversations USING GIN(search_vector)
     """)
 
+    # Trigger function: recompute search_vector on INSERT or UPDATE.
+    op.execute("""
+        CREATE OR REPLACE FUNCTION conversations_search_vector_update()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            NEW.search_vector := to_tsvector(
+                'english'::regconfig,
+                coalesce(NEW.title, '') || ' ' ||
+                coalesce(array_to_string(NEW.tags, ' '), '')
+            );
+            RETURN NEW;
+        END;
+        $$
+    """)
+
+    op.execute("""
+        DROP TRIGGER IF EXISTS trig_conv_search_vector ON conversations
+    """)
+
+    op.execute("""
+        CREATE TRIGGER trig_conv_search_vector
+        BEFORE INSERT OR UPDATE OF title, tags
+        ON conversations
+        FOR EACH ROW EXECUTE FUNCTION conversations_search_vector_update()
+    """)
+
 
 def downgrade() -> None:
+    op.execute("DROP TRIGGER IF EXISTS trig_conv_search_vector ON conversations")
+    op.execute("DROP FUNCTION IF EXISTS conversations_search_vector_update()")
     op.execute("DROP INDEX IF EXISTS idx_conv_search")
     op.execute("ALTER TABLE conversations DROP COLUMN IF EXISTS search_vector")

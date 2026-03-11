@@ -67,6 +67,20 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
   // Replay mode
   const [replayMode, setReplayMode] = useState(false)
 
+  // Copy link
+  const [linkCopied, setLinkCopied] = useState(false)
+  const linkCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function copyShareLink() {
+    if (!conv) return
+    const url = `${window.location.origin}/c/${conv.id}`
+    void navigator.clipboard.writeText(url).then(() => {
+      if (linkCopyTimerRef.current) clearTimeout(linkCopyTimerRef.current)
+      setLinkCopied(true)
+      linkCopyTimerRef.current = setTimeout(() => setLinkCopied(false), 2000)
+    })
+  }
+
   // ---------------------------------------------------------------------------
   // Load
   // ---------------------------------------------------------------------------
@@ -305,6 +319,29 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
               Continue
             </button>
           )}
+          {conv?.visibility === 'public' && (
+            <button
+              onClick={copyShareLink}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-xs text-gray-300 transition-colors"
+              title="Copy shareable link"
+            >
+              {linkCopied ? (
+                <>
+                  <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="text-green-400">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  Copy link
+                </>
+              )}
+            </button>
+          )}
           <button
             onClick={() => setReplayMode(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
@@ -451,11 +488,19 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                   <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin" />
                 )}
               </button>
-              <p className="text-xs text-gray-600">
-                {conv.visibility === 'public'
-                  ? 'Anyone with the link can view this conversation.'
-                  : 'Only you can see this conversation.'}
-              </p>
+              {conv.visibility === 'public' ? (
+                <p className="text-xs text-gray-600">
+                  Anyone with the link can view this conversation.{' '}
+                  <button
+                    onClick={copyShareLink}
+                    className="text-indigo-500 hover:text-indigo-400 transition-colors"
+                  >
+                    {linkCopied ? '✓ Link copied!' : 'Copy link'}
+                  </button>
+                </p>
+              ) : (
+                <p className="text-xs text-gray-600">Only you can see this conversation.</p>
+              )}
             </div>
 
             {/* Save indicator / error */}

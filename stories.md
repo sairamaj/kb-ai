@@ -345,6 +345,6 @@ so that I can find relevant conversations even when I do not remember the exact 
 | 2 — Auth & Save | AUTH-01, AUTH-02, SAVE-01, SAVE-02, SAVE-03 | Login, save conversations |
 | 3 — Library | LIB-01, LIB-02, LIB-03, LIB-04, LIB-05 | Browse, search, manage KB |
 | 4 — Replay | REPLAY-01, REPLAY-02, REPLAY-03, REPLAY-04 | Step-through review mode |
-| 5 — Public Sharing | SHARE-01, SHARE-02 | Public links and discovery feed |
+| 5 — Public Sharing | SHARE-01 done, SHARE-02 done | Public links and discovery feed |
 | 6 — Collections | COL-01, COL-02, COL-03 | Grouped, curated knowledge sets |
 | 7 — Search v2 | SEARCH-01, SEARCH-02 | Semantic similarity search |

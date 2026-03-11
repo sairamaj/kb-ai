@@ -33,7 +33,11 @@ const GitHubIcon = () => (
   </svg>
 )
 
-export function LoginPage() {
+interface LoginPageProps {
+  onGoToFeed?: () => void
+}
+
+export function LoginPage({ onGoToFeed }: LoginPageProps) {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center px-4">
       <div className="w-full max-w-sm">
@@ -73,6 +77,20 @@ export function LoginPage() {
           By signing in you agree that your conversations are stored securely
           and privately by default.
         </p>
+
+        {onGoToFeed && (
+          <div className="mt-6 text-center">
+            <button
+              onClick={onGoToFeed}
+              className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-indigo-400 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
+              </svg>
+              Browse public conversations
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
