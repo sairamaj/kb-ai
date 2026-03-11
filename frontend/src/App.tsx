@@ -5,6 +5,7 @@ import { ChatPage } from './components/ChatPage'
 import { ConversationDetailPage } from './components/ConversationDetailPage'
 import { LibraryPage } from './components/LibraryPage'
 import { PublicConversationPage } from './components/PublicConversationPage'
+import { PublicCollectionPage } from './components/PublicCollectionPage'
 import { FeedPage } from './components/FeedPage'
 import type { Message } from './types/chat'
 
@@ -13,6 +14,7 @@ type AppPage =
   | { name: 'library' }
   | { name: 'conversation'; id: string; from: 'chat' | 'library' }
   | { name: 'public-conversation'; id: string }
+  | { name: 'public-collection'; id: string }
   | { name: 'feed' }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -22,12 +24,17 @@ function parsePath(pathname: string): AppPage {
   if (publicConvMatch && UUID_RE.test(publicConvMatch[1])) {
     return { name: 'public-conversation', id: publicConvMatch[1] }
   }
+  const publicColMatch = pathname.match(/^\/collections\/public\/(.+)$/)
+  if (publicColMatch && UUID_RE.test(publicColMatch[1])) {
+    return { name: 'public-collection', id: publicColMatch[1] }
+  }
   if (pathname === '/feed') return { name: 'feed' }
   return { name: 'chat' }
 }
 
 function pageToPath(page: AppPage): string {
   if (page.name === 'public-conversation') return `/c/${page.id}`
+  if (page.name === 'public-collection') return `/collections/public/${page.id}`
   if (page.name === 'feed') return '/feed'
   return '/'
 }
@@ -61,6 +68,17 @@ function AppShell() {
         id={page.id}
         onGoToFeed={() => setPage({ name: 'feed' })}
         onGoToLogin={() => setPage({ name: 'chat' })}
+      />
+    )
+  }
+
+  if (page.name === 'public-collection') {
+    return (
+      <PublicCollectionPage
+        id={page.id}
+        onGoToFeed={() => setPage({ name: 'feed' })}
+        onGoToLogin={() => setPage({ name: 'chat' })}
+        onOpenConversation={(id) => setPage({ name: 'public-conversation', id })}
       />
     )
   }

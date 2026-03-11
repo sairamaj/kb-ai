@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
+import type { CollectionSummary, CreateCollectionPayload, UpdateCollectionPayload } from '../types/collection'
 import type { ConversationSummary } from '../types/conversation'
 
+type LibraryView = 'conversations' | 'collections'
 type SortOption = 'recent' | 'oldest' | 'most_replayed'
 
 const SORT_LABELS: Record<SortOption, string> = {
@@ -31,6 +33,8 @@ interface Props {
 export function LibraryPage({ onBack, onOpenConversation }: Props) {
   const { user, logout, deleteAccount } = useAuth()
 
+  const [libraryView, setLibraryView] = useState<LibraryView>('conversations')
+
   const [query, setQuery] = useState('')
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [allTags, setAllTags] = useState<string[]>([])
@@ -43,6 +47,19 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [collectionAction, setCollectionAction] = useState<{ convId: string; collectionId: string } | null>(null)
+
+  const [collections, setCollections] = useState<CollectionSummary[]>([])
+  const [collectionsLoading, setCollectionsLoading] = useState(false)
+  const [collectionsError, setCollectionsError] = useState<string | null>(null)
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
+  const [showCreateCollection, setShowCreateCollection] = useState(false)
+  const [createCollectionName, setCreateCollectionName] = useState('')
+  const [createCollectionVisibility, setCreateCollectionVisibility] = useState<'public' | 'private'>('private')
+  const [isCreatingCollection, setIsCreatingCollection] = useState(false)
+  const [createCollectionError, setCreateCollectionError] = useState<string | null>(null)
+  const [collectionVisibilityUpdating, setCollectionVisibilityUpdating] = useState<string | null>(null)
+  const [copiedCollectionId, setCopiedCollectionId] = useState<string | null>(null)
 
   const [showDeleteAccount, setShowDeleteAccount] = useState(false)
   const [isDeletingAccount, setIsDeletingAccount] = useState(false)
@@ -68,6 +85,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
     const params = new URLSearchParams()
     if (debouncedQuery) params.set('q', debouncedQuery)
     selectedTags.forEach((t) => params.append('tags', t))
+    if (selectedCollectionId) params.set('collection_id', selectedCollectionId)
     params.set('sort', sort)
 
     fetch(`/api/conversations?${params.toString()}`, { credentials: 'include' })
@@ -83,7 +101,86 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
         setError(err instanceof Error ? err.message : 'Failed to load conversations.')
         setIsLoading(false)
       })
-  }, [debouncedQuery, selectedTags, sort])
+  }, [debouncedQuery, selectedTags, selectedCollectionId, sort])
+
+  useEffect(() => {
+    setCollectionsLoading(true)
+    setCollectionsError(null)
+    fetch('/api/collections', { credentials: 'include' })
+      .then((r) => {
+        if (!r.ok) throw new Error(`Failed to load collections (${r.status})`)
+        return r.json() as Promise<CollectionSummary[]>
+      })
+      .then((data) => {
+        setCollections(data)
+        setCollectionsLoading(false)
+      })
+      .catch((err: unknown) => {
+        setCollectionsError(err instanceof Error ? err.message : 'Failed to load collections.')
+        setCollectionsLoading(false)
+      })
+  }, [libraryView])
+
+  async function submitCreateCollection() {
+    const name = createCollectionName.trim()
+    if (!name) {
+      setCreateCollectionError('Name is required.')
+      return
+    }
+    setIsCreatingCollection(true)
+    setCreateCollectionError(null)
+    try {
+      const body: CreateCollectionPayload = { name, visibility: createCollectionVisibility }
+      const res = await fetch('/api/collections', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        const detail = data?.detail
+        const message = Array.isArray(detail)
+          ? detail.map((e: { msg?: string }) => e.msg ?? '').filter(Boolean).join(', ') || `Failed (${res.status})`
+          : (typeof detail === 'string' ? detail : null) ?? `Create failed (${res.status})`
+        throw new Error(message)
+      }
+      const created = (await res.json()) as CollectionSummary
+      setCollections((prev) => [created, ...prev])
+      setShowCreateCollection(false)
+      setCreateCollectionName('')
+      setCreateCollectionVisibility('private')
+    } catch (err) {
+      setCreateCollectionError(err instanceof Error ? err.message : 'Create failed.')
+    } finally {
+      setIsCreatingCollection(false)
+    }
+  }
+
+  async function updateCollectionVisibility(collectionId: string, visibility: 'public' | 'private') {
+    setCollectionVisibilityUpdating(collectionId)
+    try {
+      const res = await fetch(`/api/collections/${collectionId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visibility } as UpdateCollectionPayload),
+      })
+      if (!res.ok) throw new Error('Failed to update')
+      const updated = (await res.json()) as CollectionSummary
+      setCollections((prev) => prev.map((c) => (c.id === collectionId ? updated : c)))
+    } finally {
+      setCollectionVisibilityUpdating(null)
+    }
+  }
+
+  function copyCollectionLink(collectionId: string) {
+    const url = `${window.location.origin}/collections/public/${collectionId}`
+    void navigator.clipboard.writeText(url).then(() => {
+      setCopiedCollectionId(collectionId)
+      setTimeout(() => setCopiedCollectionId(null), 2000)
+    })
+  }
 
   function toggleTag(tag: string) {
     setSelectedTags((prev) =>
@@ -94,6 +191,45 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
   function clearAll() {
     setQuery('')
     setSelectedTags([])
+    setSelectedCollectionId(null)
+  }
+
+  async function addConversationToCollection(convId: string, collectionId: string) {
+    setCollectionAction({ convId, collectionId })
+    try {
+      const res = await fetch(`/api/collections/${collectionId}/conversations`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: convId }),
+      })
+      if (!res.ok) throw new Error('Failed to add')
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === convId ? { ...c, collection_ids: [...(c.collection_ids ?? []), collectionId] } : c,
+        ),
+      )
+    } finally {
+      setCollectionAction(null)
+    }
+  }
+
+  async function removeConversationFromCollection(convId: string, collectionId: string) {
+    setCollectionAction({ convId, collectionId })
+    try {
+      const res = await fetch(`/api/collections/${collectionId}/conversations/${convId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error('Failed to remove')
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === convId ? { ...c, collection_ids: (c.collection_ids ?? []).filter((id) => id !== collectionId) } : c,
+        ),
+      )
+    } finally {
+      setCollectionAction(null)
+    }
   }
 
   async function confirmDelete() {
@@ -142,7 +278,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
     })
   }
 
-  const hasFilter = debouncedQuery.length > 0 || selectedTags.length > 0
+  const hasFilter = debouncedQuery.length > 0 || selectedTags.length > 0 || selectedCollectionId !== null
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-100">
@@ -181,7 +317,36 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
         </div>
       </header>
 
-      {/* Search + tag filter bar */}
+      {/* Sidebar + main content */}
+      <div className="flex flex-1 min-h-0">
+        {/* Library sidebar */}
+        <nav className="w-44 flex-shrink-0 border-r border-gray-800 flex flex-col py-3">
+          <button
+            onClick={() => setLibraryView('conversations')}
+            className={`text-left px-4 py-2.5 text-sm font-medium transition-colors ${
+              libraryView === 'conversations'
+                ? 'bg-indigo-600/20 text-indigo-300 border-r-2 border-indigo-500'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+            }`}
+          >
+            Conversations
+          </button>
+          <button
+            onClick={() => setLibraryView('collections')}
+            className={`text-left px-4 py-2.5 text-sm font-medium transition-colors ${
+              libraryView === 'collections'
+                ? 'bg-indigo-600/20 text-indigo-300 border-r-2 border-indigo-500'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+            }`}
+          >
+            Collections
+          </button>
+        </nav>
+
+        {/* Main content */}
+        <div className="flex-1 flex flex-col min-w-0">
+      {/* Search + tag filter bar — only when viewing conversations */}
+      {libraryView === 'conversations' && (
       <div className="px-4 py-4 border-b border-gray-800 flex-shrink-0">
         <div className="max-w-3xl mx-auto space-y-3">
           {/* Search input */}
@@ -237,6 +402,25 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
               ))}
             </div>
 
+            {/* Collection filter */}
+            {collections.length > 0 && (
+              <>
+                <div className="w-px h-4 bg-gray-700" />
+                <select
+                  value={selectedCollectionId ?? ''}
+                  onChange={(e) => setSelectedCollectionId(e.target.value || null)}
+                  className="text-xs bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1 text-gray-300 focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="">All collections</option>
+                  {collections.map((col) => (
+                    <option key={col.id} value={col.id}>
+                      {col.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
             {/* Tag filter chips */}
             {allTags.length > 0 && (
               <>
@@ -267,6 +451,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
           </div>
         </div>
       </div>
+      )}
 
       {/* Delete confirmation modal */}
       {deleteTargetId && (
@@ -347,7 +532,8 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
         </div>
       )}
 
-      {/* Conversation list */}
+      {/* Conversation list — when viewing conversations */}
+      {libraryView === 'conversations' && (
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto">
           {isLoading ? (
@@ -421,6 +607,58 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                       </div>
                     </div>
                   </button>
+                  {/* Collections: chips + add dropdown (do not open conversation on click) */}
+                  <div
+                    className="px-4 pb-3 flex flex-wrap items-center gap-2 border-t border-gray-800/80 mt-0 pt-2"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {(conv.collection_ids ?? []).map((colId) => {
+                      const col = collections.find((c) => c.id === colId)
+                      const isRemoving = collectionAction?.convId === conv.id && collectionAction?.collectionId === colId
+                      return (
+                        <span
+                          key={colId}
+                          className="inline-flex items-center gap-1 text-xs bg-amber-900/30 text-amber-300 border border-amber-800/50 rounded-full pl-2 pr-1 py-0.5"
+                        >
+                          {col?.name ?? colId.slice(0, 8)}
+                          <button
+                            type="button"
+                            onClick={() => { void removeConversationFromCollection(conv.id, colId) }}
+                            disabled={!!collectionAction}
+                            aria-label={`Remove from ${col?.name ?? 'collection'}`}
+                            className="p-0.5 rounded-full hover:bg-amber-800/50 disabled:opacity-50"
+                          >
+                            {isRemoving ? (
+                              <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin inline-block" />
+                            ) : (
+                              <span className="text-amber-400">×</span>
+                            )}
+                          </button>
+                        </span>
+                      )
+                    })}
+                    {collections.length > 0 && (
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const colId = e.target.value
+                          if (colId) void addConversationToCollection(conv.id, colId)
+                          e.target.value = ''
+                        }}
+                        disabled={!!collectionAction}
+                        className="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-gray-400 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                      >
+                        <option value="">Add to collection…</option>
+                        {collections
+                          .filter((c) => !(conv.collection_ids ?? []).includes(c.id))
+                          .map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                      </select>
+                    )}
+                  </div>
                   <button
                     onClick={(e) => { e.stopPropagation(); setDeleteTargetId(conv.id) }}
                     aria-label="Delete conversation"
@@ -434,6 +672,195 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
               ))}
             </div>
           )}
+        </div>
+      </div>
+      )}
+
+      {/* Collections view */}
+      {libraryView === 'collections' && (
+      <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="max-w-3xl mx-auto space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-200">Collections</h2>
+            <button
+              onClick={() => {
+                setShowCreateCollection(true)
+                setCreateCollectionError(null)
+                setCreateCollectionName('')
+                setCreateCollectionVisibility('private')
+              }}
+              className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+            >
+              New collection
+            </button>
+          </div>
+          {collectionsLoading ? (
+            <div className="flex justify-center py-16">
+              <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+            </div>
+          ) : collectionsError ? (
+            <div className="text-sm text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-4 py-3">
+              {collectionsError}
+            </div>
+          ) : collections.length === 0 ? (
+            <div className="flex flex-col items-center py-16 gap-3">
+              <p className="text-gray-500 text-sm">No collections yet.</p>
+              <p className="text-xs text-gray-600">Create one to group related conversations.</p>
+              <button
+                onClick={() => {
+                  setShowCreateCollection(true)
+                  setCreateCollectionError(null)
+                  setCreateCollectionName('')
+                  setCreateCollectionVisibility('private')
+                }}
+                className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+              >
+                New collection
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-gray-600 mb-2">
+                {collections.length} collection{collections.length !== 1 ? 's' : ''}
+              </p>
+              {collections.map((col) => (
+                <div
+                  key={col.id}
+                  className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3.5 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-100">{col.name}</p>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void updateCollectionVisibility(col.id, col.visibility === 'public' ? 'private' : 'public')
+                        }
+                        disabled={collectionVisibilityUpdating === col.id}
+                        className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
+                          col.visibility === 'public'
+                            ? 'bg-emerald-900/40 text-emerald-400 border-emerald-800/60 hover:bg-emerald-900/60'
+                            : 'bg-gray-800 text-gray-500 border-gray-700 hover:bg-gray-700 hover:text-gray-400'
+                        } disabled:opacity-50`}
+                        title={col.visibility === 'public' ? 'Click to make private' : 'Click to make public'}
+                      >
+                        {collectionVisibilityUpdating === col.id ? '…' : col.visibility}
+                      </button>
+                      <span className="text-xs text-gray-600">
+                        Created {formatDate(col.created_at)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {col.visibility === 'public' && (
+                      <button
+                        type="button"
+                        onClick={() => copyCollectionLink(col.id)}
+                        className="text-xs px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-gray-200 transition-colors flex items-center gap-1.5"
+                        title="Copy shareable link"
+                      >
+                        {copiedCollectionId === col.id ? (
+                          <>
+                            <span className="text-green-400">Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            Copy link
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      )}
+
+      {/* Create collection modal */}
+      {showCreateCollection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl flex flex-col gap-4">
+            <h2 className="text-base font-semibold text-gray-100">New collection</h2>
+            <p className="text-sm text-gray-400">Give your collection a name and choose visibility.</p>
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="collection-name" className="block text-xs font-medium text-gray-400 mb-1">
+                  Name
+                </label>
+                <input
+                  id="collection-name"
+                  type="text"
+                  value={createCollectionName}
+                  onChange={(e) => setCreateCollectionName(e.target.value)}
+                  placeholder="e.g. Python Tips"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm placeholder:text-gray-500 focus:outline-none focus:border-indigo-500"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <span className="block text-xs font-medium text-gray-400 mb-2">Visibility</span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCreateCollectionVisibility('private')}
+                    className={`flex-1 text-xs py-2 rounded-lg border transition-colors ${
+                      createCollectionVisibility === 'private'
+                        ? 'bg-indigo-600 border-indigo-500 text-white'
+                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    Private
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateCollectionVisibility('public')}
+                    className={`flex-1 text-xs py-2 rounded-lg border transition-colors ${
+                      createCollectionVisibility === 'public'
+                        ? 'bg-indigo-600 border-indigo-500 text-white'
+                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    Public
+                  </button>
+                </div>
+              </div>
+            </div>
+            {createCollectionError && (
+              <p className="text-xs text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">
+                {createCollectionError}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowCreateCollection(false)
+                  setCreateCollectionError(null)
+                }}
+                disabled={isCreatingCollection}
+                className="px-4 py-2 text-sm rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void submitCreateCollection()}
+                disabled={isCreatingCollection}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isCreatingCollection && (
+                  <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                )}
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
         </div>
       </div>
     </div>

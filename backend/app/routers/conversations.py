@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth import CurrentUser
 from app.database import get_db
-from app.models import Conversation, Message, MessageRole, Visibility
+from app.models import Collection, Conversation, ConversationCollection, Message, MessageRole, Visibility
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -42,6 +42,7 @@ class ConversationResponse(BaseModel):
     replay_count: int
     created_at: str
     updated_at: str
+    collection_ids: list[str] = []
 
 
 class MessageResponse(BaseModel):
@@ -61,6 +62,7 @@ class ConversationDetailResponse(BaseModel):
     created_at: str
     updated_at: str
     messages: list[MessageResponse]
+    collection_ids: list[str] = []
 
 
 class PublicConversationDetailResponse(BaseModel):
@@ -94,7 +96,10 @@ async def _fetch_conversation(
     result = await db.execute(
         select(Conversation)
         .where(Conversation.id == conv_uuid)
-        .options(selectinload(Conversation.messages))
+        .options(
+            selectinload(Conversation.messages),
+            selectinload(Conversation.collection_links),
+        )
     )
     return result.scalar_one_or_none()
 
@@ -130,6 +135,7 @@ def _to_detail_response(conv: Conversation) -> ConversationDetailResponse:
             )
             for m in conv.messages
         ],
+        collection_ids=[str(link.collection_id) for link in conv.collection_links],
     )
 
 
@@ -197,6 +203,7 @@ async def save_conversation(
         replay_count=conversation.replay_count,
         created_at=conversation.created_at.isoformat(),
         updated_at=conversation.updated_at.isoformat(),
+        collection_ids=[],
     )
 
 
@@ -222,23 +229,36 @@ async def list_conversations(
     db: AsyncSession = Depends(get_db),
     q: str = "",
     tags: list[str] = Query(default=[]),
+    collection_id: str | None = Query(default=None, description="Filter to conversations in this collection"),
     sort: Literal["recent", "oldest", "most_replayed"] = "recent",
     limit: int = 50,
     offset: int = 0,
 ) -> list[ConversationResponse]:
     """
     List the authenticated user's conversations with optional keyword search,
-    tag filtering, and sorting.
+    tag filtering, collection filter, and sorting.
 
     - ``q`` performs full-text search against conversation title/tags
       (via the GIN-indexed ``search_vector`` generated column) **and** against
       message content (via an inline ``to_tsvector`` subquery).
     - ``tags`` filters to conversations whose tags array overlaps the given set.
+    - ``collection_id`` filters to conversations that belong to the given collection.
     - ``sort`` controls ordering: ``recent`` (default), ``oldest``, or
       ``most_replayed``.
     All parameters can be combined.
     """
     owner_uuid = uuid.UUID(current_user.sub)
+
+    if collection_id is not None:
+        try:
+            col_uuid = uuid.UUID(collection_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid collection_id")
+        col_result = await db.execute(
+            select(Collection).where(Collection.id == col_uuid, Collection.owner_id == owner_uuid)
+        )
+        if col_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Collection not found")
 
     msg_count_sq = (
         select(func.count(Message.id))
@@ -251,6 +271,15 @@ async def list_conversations(
         select(Conversation, msg_count_sq.label("message_count"))
         .where(Conversation.owner_id == owner_uuid)
     )
+
+    if collection_id is not None:
+        stmt = stmt.where(
+            Conversation.id.in_(
+                select(ConversationCollection.conversation_id).where(
+                    ConversationCollection.collection_id == col_uuid
+                )
+            )
+        )
 
     if tags:
         stmt = stmt.where(Conversation.tags.overlap(tags))
@@ -275,6 +304,19 @@ async def list_conversations(
     stmt = stmt.order_by(_sort_clause).limit(limit).offset(offset)
 
     rows = (await db.execute(stmt)).all()
+
+    # Load collection_ids for all listed conversations
+    conv_ids = [conv.id for conv, _ in rows]
+    collection_map: dict[uuid.UUID, list[str]] = {cid: [] for cid in conv_ids}
+    if conv_ids:
+        cc_result = await db.execute(
+            select(ConversationCollection.conversation_id, ConversationCollection.collection_id).where(
+                ConversationCollection.conversation_id.in_(conv_ids)
+            )
+        )
+        for conv_id, col_id in cc_result.all():
+            collection_map[conv_id].append(str(col_id))
+
     return [
         ConversationResponse(
             id=str(conv.id),
@@ -286,6 +328,7 @@ async def list_conversations(
             replay_count=conv.replay_count,
             created_at=conv.created_at.isoformat(),
             updated_at=conv.updated_at.isoformat(),
+            collection_ids=collection_map.get(conv.id, []),
         )
         for conv, msg_count in rows
     ]

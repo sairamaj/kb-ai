@@ -15,6 +15,7 @@ export interface ConversationSummary {
   replay_count: number
   created_at: string
   updated_at: string
+  collection_ids: string[]
 }
 
 export interface ConversationDetail {
@@ -27,6 +28,7 @@ export interface ConversationDetail {
   created_at: string
   updated_at: string
   messages: ConversationMessage[]
+  collection_ids: string[]
 }
 
 export interface UpdateConversationPayload {

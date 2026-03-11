@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext'
 import { MessageBubble } from './MessageBubble'
 import { ReplayMode } from './ReplayMode'
 import { ConversationDetail, UpdateConversationPayload } from '../types/conversation'
+import type { CollectionSummary } from '../types/collection'
 import { Message } from '../types/chat'
 
 interface Props {
@@ -67,6 +68,10 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
   // Replay mode
   const [replayMode, setReplayMode] = useState(false)
 
+  // Collections
+  const [collections, setCollections] = useState<CollectionSummary[]>([])
+  const [collectionAction, setCollectionAction] = useState<{ collectionId: string } | null>(null)
+
   // Copy link
   const [linkCopied, setLinkCopied] = useState(false)
   const linkCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -102,6 +107,13 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
         setIsLoading(false)
       })
   }, [id])
+
+  useEffect(() => {
+    fetch('/api/collections', { credentials: 'include' })
+      .then((r) => (r.ok ? (r.json() as Promise<CollectionSummary[]>) : []))
+      .then(setCollections)
+      .catch(() => undefined)
+  }, [])
 
   // Focus input when entering edit mode
   useEffect(() => {
@@ -219,6 +231,40 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
     setVisibilitySaving(true)
     await patch({ visibility: next }, 'visibility')
     setVisibilitySaving(false)
+  }
+
+  async function addToCollection(collectionId: string) {
+    if (!conv || collectionAction) return
+    setCollectionAction({ collectionId })
+    try {
+      const res = await fetch(`/api/collections/${collectionId}/conversations`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: id }),
+      })
+      if (!res.ok) throw new Error('Failed to add')
+      const updated = (await fetch(`/api/conversations/${id}`, { credentials: 'include' }).then((r) => r.json())) as ConversationDetail
+      setConv(updated)
+    } finally {
+      setCollectionAction(null)
+    }
+  }
+
+  async function removeFromCollection(collectionId: string) {
+    if (!conv || collectionAction) return
+    setCollectionAction({ collectionId })
+    try {
+      const res = await fetch(`/api/collections/${collectionId}/conversations/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error('Failed to remove')
+      const updated = (await fetch(`/api/conversations/${id}`, { credentials: 'include' }).then((r) => r.json())) as ConversationDetail
+      setConv(updated)
+    } finally {
+      setCollectionAction(null)
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -465,6 +511,57 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                   </span>
                 </button>
               )}
+            </div>
+
+            {/* Collections */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-gray-500 uppercase tracking-wide">Collections</span>
+              <div className="flex flex-wrap items-center gap-2">
+                {(conv.collection_ids ?? []).map((colId) => {
+                  const col = collections.find((c) => c.id === colId)
+                  const isRemoving = collectionAction?.collectionId === colId
+                  return (
+                    <span
+                      key={colId}
+                      className="inline-flex items-center gap-1 text-xs bg-amber-900/30 text-amber-300 border border-amber-800/50 rounded-full pl-2 pr-1 py-0.5"
+                    >
+                      {col?.name ?? colId.slice(0, 8)}
+                      <button
+                        type="button"
+                        onClick={() => { void removeFromCollection(colId) }}
+                        disabled={!!collectionAction}
+                        aria-label={`Remove from ${col?.name ?? 'collection'}`}
+                        className="p-0.5 rounded-full hover:bg-amber-800/50 disabled:opacity-50 text-amber-400"
+                      >
+                        {isRemoving ? (
+                          <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin inline-block" />
+                        ) : (
+                          '×'
+                        )}
+                      </button>
+                    </span>
+                  )
+                })}
+                {collections.length > 0 && (
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const cid = e.target.value
+                      if (cid) void addToCollection(cid)
+                      e.target.value = ''
+                    }}
+                    disabled={!!collectionAction}
+                    className="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-gray-400 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="">Add to collection…</option>
+                    {collections
+                      .filter((c) => !(conv.collection_ids ?? []).includes(c.id))
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                  </select>
+                )}
+              </div>
             </div>
 
             {/* Visibility toggle */}
