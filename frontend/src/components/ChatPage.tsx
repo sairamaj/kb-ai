@@ -6,14 +6,17 @@ import { ChatInput } from './ChatInput'
 import { EmptyState } from './EmptyState'
 import { TypingIndicator } from './TypingIndicator'
 import { SaveDialog } from './SaveDialog'
+import type { Message } from '../types/chat'
 
 interface Props {
   onOpenConversation: (id: string) => void
   onOpenLibrary: () => void
+  initialMessages?: Message[]
+  continuedFromTitle?: string
 }
 
-export function ChatPage({ onOpenConversation, onOpenLibrary }: Props) {
-  const { messages, addMessage, appendToLastAssistant, clearMessages, clearDraft, hasDraft } = useChat()
+export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, continuedFromTitle }: Props) {
+  const { messages, addMessage, appendToLastAssistant, clearMessages, clearDraft, hasDraft } = useChat(initialMessages)
   const { user, logout } = useAuth()
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -21,7 +24,8 @@ export function ChatPage({ onOpenConversation, onOpenLibrary }: Props) {
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [savedConversationId, setSavedConversationId] = useState<string | null>(null)
-  const [showDraftNotice, setShowDraftNotice] = useState(hasDraft)
+  const [showDraftNotice, setShowDraftNotice] = useState(hasDraft && !initialMessages?.length)
+  const [showContinueBanner, setShowContinueBanner] = useState(!!continuedFromTitle)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -57,6 +61,7 @@ export function ChatPage({ onOpenConversation, onOpenLibrary }: Props) {
     setSaveSuccess(false)
     setSavedConversationId(null)
     setShowDraftNotice(false)
+    setShowContinueBanner(false)
   }
 
   // Derive a default title from the first user message.
@@ -156,6 +161,20 @@ export function ChatPage({ onOpenConversation, onOpenLibrary }: Props) {
           <EmptyState />
         ) : (
           <div className="max-w-2xl mx-auto flex flex-col gap-4">
+            {showContinueBanner && continuedFromTitle && (
+              <div className="flex items-center justify-between text-xs text-indigo-400 bg-indigo-900/20 border border-indigo-800 rounded-lg px-3 py-2">
+                <span>
+                  Continuing from <span className="font-medium text-indigo-300">"{continuedFromTitle}"</span> — new messages will be saved as a new conversation.
+                </span>
+                <button
+                  onClick={() => setShowContinueBanner(false)}
+                  className="ml-4 text-indigo-500 hover:text-indigo-300 transition-colors shrink-0"
+                  aria-label="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {showDraftNotice && (
               <div className="flex items-center justify-between text-xs text-amber-400 bg-amber-900/20 border border-amber-800 rounded-lg px-3 py-2">
                 <span>Draft restored — your previous conversation was recovered.</span>

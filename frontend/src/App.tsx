@@ -4,9 +4,10 @@ import { LoginPage } from './pages/LoginPage'
 import { ChatPage } from './components/ChatPage'
 import { ConversationDetailPage } from './components/ConversationDetailPage'
 import { LibraryPage } from './components/LibraryPage'
+import type { Message } from './types/chat'
 
 type AppPage =
-  | { name: 'chat' }
+  | { name: 'chat'; initialMessages?: Message[]; continuedFromTitle?: string }
   | { name: 'library' }
   | { name: 'conversation'; id: string; from: 'chat' | 'library' }
 
@@ -40,14 +41,21 @@ function AppShell() {
         id={page.id}
         onBack={() => setPage(backPage)}
         onDeleted={() => setPage(backPage)}
+        onContinue={(messages, title) =>
+          setPage({ name: 'chat', initialMessages: messages, continuedFromTitle: title })
+        }
       />
     )
   }
 
+  // At this point page.name === 'chat' (all other cases returned above)
+  const chatPage = page as { name: 'chat'; initialMessages?: Message[]; continuedFromTitle?: string }
   return (
     <ChatPage
       onOpenConversation={(id: string) => setPage({ name: 'conversation', id, from: 'chat' })}
       onOpenLibrary={() => setPage({ name: 'library' })}
+      initialMessages={chatPage.initialMessages}
+      continuedFromTitle={chatPage.continuedFromTitle}
     />
   )
 }

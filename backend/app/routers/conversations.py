@@ -39,6 +39,7 @@ class ConversationResponse(BaseModel):
     model: str
     visibility: str
     message_count: int
+    replay_count: int
     created_at: str
     updated_at: str
 
@@ -167,6 +168,7 @@ async def save_conversation(
         model=conversation.model,
         visibility=conversation.visibility,
         message_count=len(msgs),
+        replay_count=conversation.replay_count,
         created_at=conversation.created_at.isoformat(),
         updated_at=conversation.updated_at.isoformat(),
     )
@@ -255,6 +257,7 @@ async def list_conversations(
             model=conv.model,
             visibility=conv.visibility,
             message_count=msg_count,
+            replay_count=conv.replay_count,
             created_at=conv.created_at.isoformat(),
             updated_at=conv.updated_at.isoformat(),
         )
@@ -290,6 +293,30 @@ async def delete_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
     await db.delete(conv)
     await db.commit()
+
+
+class ReplayCountResponse(BaseModel):
+    replay_count: int
+
+
+@router.post("/{conversation_id}/replay", response_model=ReplayCountResponse)
+async def increment_replay_count(
+    conversation_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ReplayCountResponse:
+    """Increment replay_count each time Replay Mode is started for a conversation."""
+    conv_uuid = _parse_uuid(conversation_id)
+    result = await db.execute(
+        select(Conversation).where(Conversation.id == conv_uuid)
+    )
+    conv = result.scalar_one_or_none()
+    if conv is None or str(conv.owner_id) != current_user.sub:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conv.replay_count = (conv.replay_count or 0) + 1
+    await db.commit()
+    return ReplayCountResponse(replay_count=conv.replay_count)
 
 
 @router.patch("/{conversation_id}", response_model=ConversationDetailResponse)

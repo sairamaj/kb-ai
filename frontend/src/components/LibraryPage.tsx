@@ -413,6 +413,11 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                         <p className="text-xs text-gray-600 mt-0.5">
                           {conv.message_count} msg{conv.message_count !== 1 ? 's' : ''}
                         </p>
+                        {conv.replay_count > 0 && (
+                          <p className="text-xs text-indigo-500 mt-0.5" title="Times replayed">
+                            ▶ {conv.replay_count}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </button>

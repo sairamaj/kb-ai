@@ -12,6 +12,7 @@ export interface ConversationSummary {
   model: string
   visibility: 'public' | 'private'
   message_count: number
+  replay_count: number
   created_at: string
   updated_at: string
 }

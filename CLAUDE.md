@@ -114,7 +114,7 @@ User stories are in `stories.md`, organized by phase. Requirements are in `requi
 1. Foundation (INFRA, CHAT) — **done**
 2. Auth & Save (AUTH, SAVE) — AUTH-01 done
 3. Library (LIB) — LIB-01 done, LIB-02 done
-4. Replay Mode (REPLAY)
+4. Replay Mode (REPLAY) — REPLAY-01 done, REPLAY-02 done, REPLAY-03 done, REPLAY-04 done
 5. Public Sharing (SHARE)
 6. Collections (COL)
 7. Search v2 (SEARCH — pgvector semantic search)

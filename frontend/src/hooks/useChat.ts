@@ -102,8 +102,14 @@ export async function streamChatReply(
   onDone()
 }
 
-export function useChat() {
-  const [messages, setMessages] = useState<Message[]>(() => loadDraft())
+export function useChat(initialMessages?: Message[]) {
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (initialMessages && initialMessages.length > 0) {
+      localStorage.removeItem(DRAFT_KEY)
+      return initialMessages
+    }
+    return loadDraft()
+  })
   // When true, the effect skips writing to localStorage (used after an explicit save).
   const skipPersistRef = useRef(false)
   // True when the initial state was restored from a non-empty draft.

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { MessageBubble } from './MessageBubble'
+import { ReplayMode } from './ReplayMode'
 import { ConversationDetail, UpdateConversationPayload } from '../types/conversation'
 import { Message } from '../types/chat'
 
@@ -8,6 +9,7 @@ interface Props {
   id: string
   onBack: () => void
   onDeleted?: () => void
+  onContinue?: (messages: Message[], title: string) => void
 }
 
 function formatDate(iso: string): string {
@@ -28,7 +30,7 @@ function toUiMessage(m: { id: string; role: string; content: string }): Message 
   }
 }
 
-export function ConversationDetailPage({ id, onBack, onDeleted }: Props) {
+export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Props) {
   const { user, logout } = useAuth()
 
   const [conv, setConv] = useState<ConversationDetail | null>(null)
@@ -61,6 +63,9 @@ export function ConversationDetailPage({ id, onBack, onDeleted }: Props) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  // Replay mode
+  const [replayMode, setReplayMode] = useState(false)
 
   // ---------------------------------------------------------------------------
   // Load
@@ -245,6 +250,18 @@ export function ConversationDetailPage({ id, onBack, onDeleted }: Props) {
     )
   }
 
+  if (replayMode && conv) {
+    return (
+      <ReplayMode
+        conv={conv}
+        onExit={() => setReplayMode(false)}
+        onReplayCountUpdated={(newCount) =>
+          setConv((prev) => prev ? { ...prev, replay_count: newCount } : prev)
+        }
+      />
+    )
+  }
+
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-100">
       {/* Header */}
@@ -264,7 +281,45 @@ export function ConversationDetailPage({ id, onBack, onDeleted }: Props) {
             <span className="font-semibold text-sm">Prompt KB</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 border-l border-gray-800 pl-3">
+        <div className="flex items-center gap-3">
+          {onContinue && (
+            <button
+              onClick={() => {
+                if (!conv) return
+                const msgs: Message[] = conv.messages
+                  .filter((m) => m.role === 'user' || m.role === 'assistant')
+                  .map((m) => ({
+                    id: m.id,
+                    role: m.role as Message['role'],
+                    content: m.content,
+                    createdAt: new Date(m.created_at),
+                  }))
+                onContinue(msgs, conv.title)
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-medium transition-colors"
+              title="Continue chatting from where this conversation left off"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              Continue
+            </button>
+          )}
+          <button
+            onClick={() => setReplayMode(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
+            title="Step through this conversation turn by turn"
+          >
+            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+              <path
+                fillRule="evenodd"
+                d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Replay
+          </button>
+          <div className="w-px h-4 bg-gray-700" />
           <span className="text-sm text-gray-300">{user?.display_name}</span>
           <button
             onClick={logout}
@@ -313,7 +368,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted }: Props) {
             </div>
 
             {/* Meta row: model + date */}
-            <div className="text-xs text-gray-500 flex items-center gap-3">
+            <div className="text-xs text-gray-500 flex items-center gap-3 flex-wrap">
               <span>{conv.model}</span>
               <span>·</span>
               <span>Saved {formatDate(conv.created_at)}</span>
@@ -325,6 +380,12 @@ export function ConversationDetailPage({ id, onBack, onDeleted }: Props) {
               )}
               <span>·</span>
               <span>{conv.messages.length} messages</span>
+              {conv.replay_count > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="text-indigo-500" title="Times replayed">▶ replayed {conv.replay_count}×</span>
+                </>
+              )}
             </div>
 
             {/* Tags */}
