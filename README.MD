@@ -4,33 +4,42 @@ Prompt Knowledge Base is a web app where you can chat with an AI assistant, save
 
 ## Instructions, custom instructions, and system prompts
 
-This app lets you control **how the assistant behaves** using *instructions*. You’ll typically see two scopes:
+You control **how the assistant behaves** using the **Customize** panel on the chat page.
 
-- **Global (default) instructions**: apply to all new conversations unless overridden.
-- **Per-conversation instructions**: apply only to one conversation and take precedence over global defaults.
+### Where to find it
+
+- In the **chat header**, click **Customize** to open the panel.
+- You’ll see:
+  - **Model** — choose provider (OpenAI / Gemini) and model; saved as e.g. `openai:gpt-4o-mini`.
+  - **Templates** — pick a template (e.g. *General dev assistant*, *Code review (PR-style)*, *Learning coach*), then **Apply** to fill **System prompt** and **Custom instructions**; use the starter prompt chips to start a new chat with that template.
+  - **System prompt (sample included)** — textarea for the assistant’s role and fixed rules.
+  - **Custom instructions (sample included)** — textarea for your preferences (tone, format, defaults).
+
+Settings are stored in your browser and apply to every message you send. (Per-conversation overrides may be added later.)
 
 ### What’s the difference?
 
-- **Custom instructions (what you edit in the app)**  
-  These are **your preferences** for how the assistant should respond (tone, structure, level of detail, default assumptions). The app stores these and sends them with each request.
+- **Custom instructions (the field you edit)**  
+  Your **preferences**: tone, structure, level of detail, default assumptions. The app sends these with each request.
 
-- **System prompt (how the app enforces instructions)**  
-  The system prompt is a **high-priority control message** included with your chat request. It sets the assistant’s role and “always true” rules.  
-  The app may implement your custom instructions by injecting them into the system prompt (or an equivalent high-priority instruction block).
+- **System prompt (the other field)**  
+  A **high-priority control message** that sets the assistant’s role and “always true” rules.  
+  In this app, **System prompt** and **Custom instructions** are combined and sent as a **single system message** on every turn (as noted under the textareas).
 
-In short: **custom instructions are the feature you configure; the system prompt is one mechanism the app uses to apply them reliably.**
+So: **custom instructions** = what you want the assistant to do by default; **system prompt** = who the assistant is and its invariants.
 
-### When should I use global vs per-conversation instructions?
+### When to use each field
 
-- **Use global instructions** when you want a consistent default across the app:
+- **System prompt**: use for role and guardrails that should rarely change:
+  - “You are a knowledgeable assistant helping a developer…”
+  - “Be practical and precise. Use markdown…”
+  - “When unsure, ask 1–2 clarifying questions.”
+
+- **Custom instructions**: use for your working preferences (you can change these per template or over time):
   - Preferred tone (concise, direct, friendly)
-  - Default output format (bullets, checklists, tables, “include a test plan”)
-  - Your baseline context (tech stack, skill level, constraints)
-
-- **Use per-conversation instructions** when the current chat needs a different “mode”:
-  - “Act as a code reviewer” for one thread
-  - “Teach me step-by-step” for a learning thread
-  - “Generate only SQL queries” for a database thread
+  - Output format (bullets, checklists, “include a test plan”)
+  - Your context (tech stack, skill level)
+  - Or switch **Templates** and **Apply** to load a preset (e.g. code review vs learning coach)
 
 ### How to write good instructions
 
@@ -42,24 +51,26 @@ In short: **custom instructions are the feature you configure; the system prompt
 
 ### Examples you can paste
 
-**Concise engineering assistant (global):**
+You can type these into **Custom instructions**, or use **Templates** → *Code review (PR-style)* / *Learning coach* and **Apply** to load similar presets.
+
+**Concise engineering assistant:**
 
 - Keep answers under 10 bullets.
 - Prefer TypeScript + React examples.
 - When giving changes, include a short test plan.
 
-**Per-conversation: “code review mode”:**
+**Code review mode** (or use template *Code review (PR-style)*):
 
 - Review my changes for correctness, security, and maintainability.
 - Call out risks and propose minimal diffs.
 - If you’re unsure, ask a single focused question.
 
-**Per-conversation: “learning mode”:**
+**Learning mode** (or use template *Learning coach*):
 
 - Explain step-by-step with small examples.
 - Pause after each step with a quick check question.
 
 ### Important note about priority
 
-If a later message conflicts with earlier instructions, the assistant may follow the **higher-priority** rules (the app’s system rules first, then your saved instructions, then the current user message). If you want to change behavior for a chat, update that conversation’s instructions rather than fighting the assistant mid-thread.
+The app sends your **System prompt** and **Custom instructions** as one system message on every turn. If something you say in the chat conflicts with those instructions, the model will usually favor the system message. To change behavior, edit **Customize** (or switch **Templates** and **Apply**) and send again.
 
