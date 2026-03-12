@@ -30,6 +30,8 @@ function loadDraft(): Message[] {
 export interface StreamContext {
   messages: Pick<Message, 'role' | 'content'>[]
   systemPrompt?: string
+  provider?: 'openai' | 'gemini'
+  model?: string
 }
 
 // Streams tokens from POST /api/chat/stream.
@@ -49,12 +51,15 @@ export async function streamChatReply(
     ...history,
   ]
 
+  const provider = ctx.provider ?? 'openai'
+  const model = ctx.model ?? 'gpt-4o-mini'
+
   let response: Response
   try {
     response = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: payload, model: 'gpt-4o-mini' }),
+      body: JSON.stringify({ messages: payload, provider, model }),
     })
   } catch {
     onError('Network error — could not reach the server.')

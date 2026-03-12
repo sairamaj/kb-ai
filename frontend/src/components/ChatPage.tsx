@@ -8,6 +8,82 @@ import { TypingIndicator } from './TypingIndicator'
 import { SaveDialog } from './SaveDialog'
 import type { Message } from '../types/chat'
 
+type ProviderId = 'openai' | 'gemini'
+
+interface ProviderOption {
+  id: ProviderId
+  label: string
+  models: string[]
+  enabled: boolean
+}
+
+interface ChatSettings {
+  provider: ProviderId
+  model: string
+  systemPrompt: string
+  customInstructions: string
+  templateId: string
+}
+
+const SETTINGS_KEY = 'kb_chat_settings'
+
+const DEFAULT_SYSTEM_PROMPT =
+  'You are a knowledgeable assistant helping a developer build their personal knowledge base.\n' +
+  'Be practical and precise. Use markdown (headings, bullets, code blocks) where helpful.\n' +
+  'When unsure, ask 1–2 clarifying questions before guessing.'
+
+const SAMPLE_CUSTOM_INSTRUCTIONS =
+  '- Prefer concise, implementation-first answers.\n' +
+  '- When you propose code changes, include a short test plan.\n' +
+  '- If you mention an API/library, show a minimal example.\n' +
+  '- Avoid long preambles.'
+
+const DEFAULT_PROVIDERS: ProviderOption[] = [
+  { id: 'openai', label: 'OpenAI', models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'], enabled: true },
+  { id: 'gemini', label: 'Gemini', models: ['gemini-2.0-flash', 'gemini-1.5-pro'], enabled: true },
+]
+
+const TEMPLATES = [
+  {
+    id: 'general-dev',
+    name: 'General dev assistant',
+    description: 'Balanced, practical help for building this app.',
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    customInstructions: SAMPLE_CUSTOM_INSTRUCTIONS,
+    starterPrompts: ['Sketch the data model for conversations + messages.', 'Add an endpoint to stream chat tokens via SSE.'],
+  },
+  {
+    id: 'code-review',
+    name: 'Code review (PR-style)',
+    description: 'Structured code review with risks and suggestions.',
+    systemPrompt:
+      'You are a senior engineer performing a PR review.\n' +
+      'Be candid but constructive. Focus on correctness, security, performance, and maintainability.\n' +
+      'When you suggest changes, show specific code snippets and explain trade-offs.',
+    customInstructions:
+      '- Format output as:\n' +
+      '  - Summary\n' +
+      '  - Major issues\n' +
+      '  - Minor issues\n' +
+      '  - Suggested diff / snippets\n' +
+      '  - Test plan\n',
+    starterPrompts: ['Review this file for edge cases and security concerns.', 'Suggest refactors to reduce complexity.'],
+  },
+  {
+    id: 'learning-coach',
+    name: 'Learning coach',
+    description: 'Teach with short lessons + quick checks.',
+    systemPrompt:
+      'You are a patient teaching assistant.\n' +
+      'Explain concepts with a small example, then ask one quick check question.\n' +
+      'Keep lessons under ~200 words unless asked to go deeper.',
+    customInstructions:
+      '- Use analogies sparingly.\n' +
+      '- Always end with: “Quick check:” followed by 1 question.\n',
+    starterPrompts: ['Teach me how JWT works in this app.', 'Explain Postgres full-text search with tsvector.'],
+  },
+] as const
+
 interface Props {
   onOpenConversation: (id: string) => void
   onOpenLibrary: () => void
@@ -26,25 +102,73 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
   const [savedConversationId, setSavedConversationId] = useState<string | null>(null)
   const [showDraftNotice, setShowDraftNotice] = useState(hasDraft && !initialMessages?.length)
   const [showContinueBanner, setShowContinueBanner] = useState(!!continuedFromTitle)
+  const [showCustomize, setShowCustomize] = useState(false)
+  const [providers, setProviders] = useState<ProviderOption[]>(DEFAULT_PROVIDERS)
+  const [settings, setSettings] = useState<ChatSettings>(() => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY)
+      if (raw) return JSON.parse(raw) as ChatSettings
+    } catch {
+      // ignore
+    }
+    return {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      customInstructions: SAMPLE_CUSTOM_INSTRUCTIONS,
+      templateId: 'general-dev',
+    }
+  })
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isStreaming])
 
-  async function handleSend(text: string) {
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+    } catch {
+      // ignore
+    }
+  }, [settings])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/chat/options')
+        if (!res.ok) return
+        const data = (await res.json()) as { providers?: ProviderOption[] }
+        if (!cancelled && data.providers && Array.isArray(data.providers) && data.providers.length > 0) {
+          setProviders(data.providers)
+        }
+      } catch {
+        // ignore and keep defaults
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  function buildSystemMessage(): string {
+    const base = (settings.systemPrompt || '').trim()
+    const instr = (settings.customInstructions || '').trim()
+    if (!instr) return base
+    if (!base) return `Custom instructions:\n${instr}`
+    return `${base}\n\nCustom instructions:\n${instr}`
+  }
+
+  async function sendWithContext(text: string, contextMessages: Message[]) {
     setError(null)
     const userMessage = addMessage('user', text)
-
-    // Snapshot full conversation history + new user message as context.
-    // The empty assistant placeholder is added to the UI but excluded from
-    // the OpenAI payload (streamChatReply filters empty messages).
-    const context = [...messages, userMessage]
+    const context = [...contextMessages, userMessage]
     addMessage('assistant', '')
     setIsStreaming(true)
 
     await streamChatReply(
-      { messages: context },
+      { messages: context, systemPrompt: buildSystemMessage(), provider: settings.provider, model: settings.model },
       (token) => appendToLastAssistant(token),
       () => setIsStreaming(false),
       (err) => {
@@ -52,6 +176,11 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
         setError(err)
       },
     )
+  }
+
+  async function handleSend(text: string) {
+    // Snapshot full conversation history + new user message as context.
+    await sendWithContext(text, messages)
   }
 
   function handleNewChat() {
@@ -75,13 +204,18 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
   async function handleSave(title: string, tags: string[]) {
     setIsSaving(true)
     try {
+      const systemMessage = buildSystemMessage()
+      const modelTag = `${settings.provider}:${settings.model}`
       const payload = {
         title,
         tags,
-        messages: messages
-          .filter((m) => m.role !== 'system' && m.content.trim())
-          .map((m) => ({ role: m.role, content: m.content })),
-        model: 'gpt-4o-mini',
+        messages: [
+          ...(systemMessage.trim() ? [{ role: 'system', content: systemMessage }] : []),
+          ...messages
+            .filter((m) => m.content.trim())
+            .map((m) => ({ role: m.role, content: m.content })),
+        ],
+        model: modelTag,
         visibility: 'private',
       }
 
@@ -122,6 +256,12 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
           <span className="font-semibold text-sm">Prompt KB</span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCustomize((v) => !v)}
+            className="text-xs text-gray-400 hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-800 border border-gray-800"
+          >
+            Customize
+          </button>
           {messages.length > 0 && !isStreaming && (
             <button
               onClick={() => { setSaveSuccess(false); setShowSaveDialog(true) }}
@@ -154,6 +294,126 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
           </div>
         </div>
       </header>
+
+      {showCustomize && (
+        <div className="border-b border-gray-800 bg-gray-950/60">
+          <div className="max-w-2xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-gray-900/40 border border-gray-800 rounded-xl p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-gray-200">Model</div>
+                <div className="text-[11px] text-gray-500">
+                  Saved as <span className="text-gray-400">{settings.provider}:{settings.model}</span>
+                </div>
+              </div>
+              <div className="mt-2 flex gap-2">
+                <select
+                  value={settings.provider}
+                  onChange={(e) => {
+                    const nextProvider = e.target.value as ProviderId
+                    const p = providers.find((x) => x.id === nextProvider)
+                    const nextModel = p?.models?.[0] ?? (nextProvider === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o-mini')
+                    setSettings((s) => ({ ...s, provider: nextProvider, model: nextModel }))
+                  }}
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {providers.map((p) => (
+                    <option key={p.id} value={p.id} disabled={!p.enabled}>
+                      {p.label}{p.enabled ? '' : ' (not configured)'}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={settings.model}
+                  onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))}
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {(providers.find((p) => p.id === settings.provider)?.models ?? []).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-3 text-[11px] text-gray-500 leading-relaxed">
+                Tip: Gemini requires <span className="text-gray-400">GEMINI_API_KEY</span> in <span className="text-gray-400">backend/.env</span>.
+              </div>
+            </div>
+
+            <div className="bg-gray-900/40 border border-gray-800 rounded-xl p-3">
+              <div className="text-xs font-semibold text-gray-200">Templates</div>
+              <div className="mt-2 flex gap-2">
+                <select
+                  value={settings.templateId}
+                  onChange={(e) => setSettings((s) => ({ ...s, templateId: e.target.value }))}
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {TEMPLATES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => {
+                    const t = TEMPLATES.find((x) => x.id === settings.templateId) ?? TEMPLATES[0]
+                    setSettings((s) => ({
+                      ...s,
+                      systemPrompt: t.systemPrompt,
+                      customInstructions: t.customInstructions,
+                    }))
+                  }}
+                  className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500 transition-colors text-white"
+                >
+                  Apply
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] text-gray-500 leading-relaxed">
+                {(TEMPLATES.find((x) => x.id === settings.templateId) ?? TEMPLATES[0]).description}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(TEMPLATES.find((x) => x.id === settings.templateId) ?? TEMPLATES[0]).starterPrompts.map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => {
+                      handleNewChat()
+                      void sendWithContext(p, [])
+                    }}
+                    className="px-2.5 py-1 text-[11px] bg-gray-800 text-gray-300 rounded-full border border-gray-700 hover:border-gray-500 hover:text-gray-100 transition-colors"
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-gray-900/40 border border-gray-800 rounded-xl p-3 md:col-span-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs font-semibold text-gray-200">System prompt (sample included)</div>
+                  <textarea
+                    value={settings.systemPrompt}
+                    onChange={(e) => setSettings((s) => ({ ...s, systemPrompt: e.target.value }))}
+                    rows={5}
+                    className="mt-2 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-gray-200">Custom instructions (sample included)</div>
+                  <textarea
+                    value={settings.customInstructions}
+                    onChange={(e) => setSettings((s) => ({ ...s, customInstructions: e.target.value }))}
+                    rows={5}
+                    className="mt-2 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+              <div className="mt-2 text-[11px] text-gray-500">
+                These are sent as a single <span className="text-gray-400">system</span> message on every turn.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Message thread */}
       <div className="flex-1 overflow-y-auto px-4 py-6">

@@ -176,10 +176,10 @@ async def save_conversation(
         else:
             title = "Untitled"
 
-    # Persist only user/assistant turns; skip system messages and empty content.
+    # Persist user/assistant/system turns; skip empty content.
     msgs = [
         m for m in body.messages
-        if m.role in ("user", "assistant") and m.content.strip()
+        if m.role in ("user", "assistant", "system") and m.content.strip()
     ]
 
     conversation = Conversation(
