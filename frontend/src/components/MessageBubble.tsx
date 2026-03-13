@@ -20,7 +20,7 @@ export function MessageBubble({ message }: Props) {
           max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words
           ${isUser
             ? 'bg-indigo-600 text-white rounded-br-sm'
-            : 'bg-gray-800 text-gray-100 rounded-bl-sm'
+            : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-bl-sm'
           }
         `}
       >
@@ -28,7 +28,7 @@ export function MessageBubble({ message }: Props) {
       </div>
 
       {isUser && (
-        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold ml-2 mt-1">
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-400 dark:bg-gray-600 flex items-center justify-center text-xs font-bold ml-2 mt-1">
           You
         </div>
       )}

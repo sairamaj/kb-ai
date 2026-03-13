@@ -1,3 +1,5 @@
+import { ThemeToggle } from '../components/ThemeToggle'
+
 function OAuthButton({
   href,
   icon,
@@ -10,7 +12,7 @@ function OAuthButton({
   return (
     <a
       href={href}
-      className="flex items-center justify-center gap-3 w-full px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-gray-600 text-sm font-medium text-gray-100 transition-colors"
+      className="flex items-center justify-center gap-3 w-full px-4 py-3 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-600 text-sm font-medium text-gray-900 dark:text-gray-100 transition-colors"
     >
       {icon}
       {label}
@@ -39,24 +41,27 @@ interface LoginPageProps {
 
 export function LoginPage({ onGoToFeed }: LoginPageProps) {
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center px-4">
+    <div className="min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 flex flex-col items-center justify-center px-4">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center gap-3 mb-10">
-          <div className="w-14 h-14 rounded-2xl bg-indigo-600 flex items-center justify-center text-xl font-bold shadow-lg shadow-indigo-600/30">
+          <div className="w-14 h-14 rounded-2xl bg-indigo-600 flex items-center justify-center text-xl font-bold text-white shadow-lg shadow-indigo-600/30">
             KB
           </div>
           <div className="text-center">
             <h1 className="text-2xl font-bold tracking-tight">Prompt KB</h1>
-            <p className="text-sm text-gray-400 mt-1">
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
               Your AI-powered knowledge base
             </p>
           </div>
         </div>
 
         {/* Sign-in card */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 flex flex-col gap-4">
-          <p className="text-sm text-gray-400 text-center">
+        <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 flex flex-col gap-4">
+          <p className="text-sm text-gray-600 dark:text-gray-400 text-center">
             Sign in to save and revisit your AI conversations
           </p>
 
@@ -73,7 +78,7 @@ export function LoginPage({ onGoToFeed }: LoginPageProps) {
           />
         </div>
 
-        <p className="text-center text-xs text-gray-600 mt-6">
+        <p className="text-center text-xs text-gray-400 dark:text-gray-600 mt-6">
           By signing in you agree that your conversations are stored securely
           and privately by default.
         </p>
@@ -82,7 +87,7 @@ export function LoginPage({ onGoToFeed }: LoginPageProps) {
           <div className="mt-6 text-center">
             <button
               onClick={onGoToFeed}
-              className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-indigo-400 transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />

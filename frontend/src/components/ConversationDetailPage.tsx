@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { MessageBubble } from './MessageBubble'
 import { ReplayMode } from './ReplayMode'
+import { ThemeToggle } from './ThemeToggle'
 import { ConversationDetail, UpdateConversationPayload } from '../types/conversation'
 import type { CollectionSummary } from '../types/collection'
 import { Message } from '../types/chat'
@@ -21,7 +22,6 @@ function formatDate(iso: string): string {
   })
 }
 
-// Convert API message to the shape MessageBubble expects.
 function toUiMessage(m: { id: string; role: string; content: string }): Message {
   return {
     id: m.id,
@@ -38,46 +38,36 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  // Title inline-edit state
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [titleSaving, setTitleSaving] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
 
-  // Tags inline-edit state
   const [editingTags, setEditingTags] = useState(false)
   const [tagsDraft, setTagsDraft] = useState('')
   const [tagsSaving, setTagsSaving] = useState(false)
   const tagsInputRef = useRef<HTMLInputElement>(null)
 
-  // Visibility toggle state
   const [visibilitySaving, setVisibilitySaving] = useState(false)
   const [pinSaving, setPinSaving] = useState(false)
 
-  // Transient save confirmation
   const [savedField, setSavedField] = useState<string | null>(null)
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Patch-level error
   const [patchError, setPatchError] = useState<string | null>(null)
 
-  // Delete state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  // Replay mode
   const [replayMode, setReplayMode] = useState(false)
 
-  // Collections
   const [collections, setCollections] = useState<CollectionSummary[]>([])
   const [collectionAction, setCollectionAction] = useState<{ collectionId: string } | null>(null)
 
-  // Copy link
   const [linkCopied, setLinkCopied] = useState(false)
   const linkCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Export
   const [exporting, setExporting] = useState(false)
 
   async function exportAsMarkdown() {
@@ -113,10 +103,6 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
     })
   }
 
-  // ---------------------------------------------------------------------------
-  // Load
-  // ---------------------------------------------------------------------------
-
   useEffect(() => {
     setIsLoading(true)
     setLoadError(null)
@@ -142,7 +128,6 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
       .catch(() => undefined)
   }, [])
 
-  // Focus input when entering edit mode
   useEffect(() => {
     if (editingTitle) titleInputRef.current?.focus()
   }, [editingTitle])
@@ -150,10 +135,6 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
   useEffect(() => {
     if (editingTags) tagsInputRef.current?.focus()
   }, [editingTags])
-
-  // ---------------------------------------------------------------------------
-  // Patch helper
-  // ---------------------------------------------------------------------------
 
   async function patch(updates: UpdateConversationPayload, fieldLabel: string) {
     setPatchError(null)
@@ -182,10 +163,6 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
     savedTimerRef.current = setTimeout(() => setSavedField(null), 2000)
   }
 
-  // ---------------------------------------------------------------------------
-  // Title handlers
-  // ---------------------------------------------------------------------------
-
   function startEditingTitle() {
     if (!conv) return
     setTitleDraft(conv.title)
@@ -211,10 +188,6 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
     if (e.key === 'Enter') { e.preventDefault(); void commitTitle() }
     if (e.key === 'Escape') cancelTitle()
   }
-
-  // ---------------------------------------------------------------------------
-  // Tags handlers
-  // ---------------------------------------------------------------------------
 
   function startEditingTags() {
     if (!conv) return
@@ -247,10 +220,6 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
     if (e.key === 'Enter') { e.preventDefault(); void commitTags() }
     if (e.key === 'Escape') cancelTags()
   }
-
-  // ---------------------------------------------------------------------------
-  // Visibility handler
-  // ---------------------------------------------------------------------------
 
   async function toggleVisibility() {
     if (!conv || visibilitySaving) return
@@ -301,10 +270,6 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Delete handler
-  // ---------------------------------------------------------------------------
-
   async function deleteConversation() {
     setIsDeleting(true)
     setDeleteError(null)
@@ -321,13 +286,9 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Render helpers
-  // ---------------------------------------------------------------------------
-
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center">
         <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
       </div>
     )
@@ -335,9 +296,9 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
 
   if (loadError || !conv) {
     return (
-      <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center gap-4 text-gray-300">
+      <div className="min-h-screen bg-white dark:bg-gray-950 flex flex-col items-center justify-center gap-4 text-gray-700 dark:text-gray-300">
         <p className="text-sm">{loadError ?? 'Conversation not found.'}</p>
-        <button onClick={onBack} className="text-sm text-indigo-400 hover:text-indigo-300">
+        <button onClick={onBack} className="text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300">
           ← Back to chat
         </button>
       </div>
@@ -357,19 +318,19 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-950 text-gray-100">
+    <div className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-800 flex-shrink-0">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
-            className="text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
+            className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             ← Back
           </button>
-          <div className="w-px h-4 bg-gray-700" />
+          <div className="w-px h-4 bg-gray-300 dark:bg-gray-700" />
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold">
+            <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold text-white">
               KB
             </div>
             <span className="font-semibold text-sm">Prompt KB</span>
@@ -402,15 +363,15 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
           {conv?.visibility === 'public' && (
             <button
               onClick={copyShareLink}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-xs text-gray-300 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-700 text-xs text-gray-700 dark:text-gray-300 transition-colors"
               title="Copy shareable link"
             >
               {linkCopied ? (
                 <>
-                  <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-3.5 h-3.5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  <span className="text-green-400">Copied!</span>
+                  <span className="text-green-600 dark:text-green-400">Copied!</span>
                 </>
               ) : (
                 <>
@@ -425,7 +386,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
           <button
             onClick={() => { void exportAsMarkdown() }}
             disabled={exporting}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-xs text-gray-300 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-700 text-xs text-gray-700 dark:text-gray-300 transition-colors disabled:opacity-50"
             title="Download as Markdown"
           >
             {exporting ? (
@@ -451,11 +412,12 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
             </svg>
             Replay
           </button>
-          <div className="w-px h-4 bg-gray-700" />
-          <span className="text-sm text-gray-300">{user?.display_name}</span>
+          <ThemeToggle />
+          <div className="w-px h-4 bg-gray-300 dark:bg-gray-700" />
+          <span className="text-sm text-gray-700 dark:text-gray-300">{user?.display_name}</span>
           <button
             onClick={logout}
-            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
           >
             Sign out
           </button>
@@ -467,7 +429,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
         <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-6">
 
           {/* Metadata card */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col gap-4">
+          <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 flex flex-col gap-4">
 
             {/* Title */}
             <div className="flex flex-col gap-1">
@@ -480,7 +442,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                   onChange={(e) => setTitleDraft(e.target.value)}
                   onBlur={() => { void commitTitle() }}
                   onKeyDown={handleTitleKeyDown}
-                  className="bg-gray-800 border border-indigo-500 rounded-lg px-3 py-1.5 text-base font-semibold text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
+                  className="bg-white dark:bg-gray-800 border border-indigo-500 rounded-lg px-3 py-1.5 text-base font-semibold text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
                   disabled={titleSaving}
                 />
               ) : (
@@ -489,7 +451,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                   className="group flex items-center gap-2 text-left"
                   title="Click to edit title"
                 >
-                  <span className="text-base font-semibold text-gray-100 group-hover:text-white transition-colors">
+                  <span className="text-base font-semibold text-gray-900 dark:text-gray-100 group-hover:text-black dark:group-hover:text-white transition-colors">
                     {conv.title}
                   </span>
                   <span className="opacity-0 group-hover:opacity-100 text-gray-500 text-xs transition-opacity select-none">
@@ -515,7 +477,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
               {conv.replay_count > 0 && (
                 <>
                   <span>·</span>
-                  <span className="text-indigo-500" title="Times replayed">▶ replayed {conv.replay_count}×</span>
+                  <span className="text-indigo-600 dark:text-indigo-500" title="Times replayed">▶ replayed {conv.replay_count}×</span>
                 </>
               )}
             </div>
@@ -532,7 +494,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                   onBlur={() => { void commitTags() }}
                   onKeyDown={handleTagsKeyDown}
                   placeholder="e.g. python, fastapi, tips"
-                  className="bg-gray-800 border border-indigo-500 rounded-lg px-3 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
+                  className="bg-white dark:bg-gray-800 border border-indigo-500 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
                   disabled={tagsSaving}
                 />
               ) : (
@@ -545,13 +507,13 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                     conv.tags.map((tag) => (
                       <span
                         key={tag}
-                        className="bg-gray-800 border border-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded-full group-hover:border-gray-600 transition-colors"
+                        className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-xs px-2 py-0.5 rounded-full group-hover:border-gray-400 dark:group-hover:border-gray-600 transition-colors"
                       >
                         {tag}
                       </span>
                     ))
                   ) : (
-                    <span className="text-gray-600 text-sm group-hover:text-gray-400 transition-colors">
+                    <span className="text-gray-400 dark:text-gray-600 text-sm group-hover:text-gray-600 dark:group-hover:text-gray-400 transition-colors">
                       No tags — click to add
                     </span>
                   )}
@@ -572,7 +534,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                   return (
                     <span
                       key={colId}
-                      className="inline-flex items-center gap-1 text-xs bg-amber-900/30 text-amber-300 border border-amber-800/50 rounded-full pl-2 pr-1 py-0.5"
+                      className="inline-flex items-center gap-1 text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50 rounded-full pl-2 pr-1 py-0.5"
                     >
                       {col?.name ?? colId.slice(0, 8)}
                       <button
@@ -580,7 +542,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                         onClick={() => { void removeFromCollection(colId) }}
                         disabled={!!collectionAction}
                         aria-label={`Remove from ${col?.name ?? 'collection'}`}
-                        className="p-0.5 rounded-full hover:bg-amber-800/50 disabled:opacity-50 text-amber-400"
+                        className="p-0.5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-800/50 disabled:opacity-50 text-amber-600 dark:text-amber-400"
                       >
                         {isRemoving ? (
                           <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin inline-block" />
@@ -600,7 +562,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                       e.target.value = ''
                     }}
                     disabled={!!collectionAction}
-                    className="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-gray-400 focus:outline-none focus:border-indigo-500"
+                    className="text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 text-gray-600 dark:text-gray-400 focus:outline-none focus:border-indigo-500"
                   >
                     <option value="">Add to collection…</option>
                     {collections
@@ -622,8 +584,8 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                 className={`
                   self-start flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors
                   ${conv.is_pinned
-                    ? 'bg-amber-900/30 border-amber-700 text-amber-300 hover:bg-amber-900/50 hover:border-amber-500'
-                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:border-gray-500'
+                    ? 'bg-amber-50 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 hover:border-amber-400 dark:hover:border-amber-500'
+                    : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:border-gray-400 dark:hover:border-gray-500'
                   }
                   disabled:opacity-50 disabled:cursor-not-allowed
                 `}
@@ -643,7 +605,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                   <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin" />
                 )}
               </button>
-              <p className="text-xs text-gray-600">
+              <p className="text-xs text-gray-400 dark:text-gray-600">
                 {conv.is_pinned ? 'This conversation appears at the top of your Library.' : 'Pin to show this at the top of your Library.'}
               </p>
             </div>
@@ -657,8 +619,8 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                 className={`
                   self-start flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors
                   ${conv.visibility === 'public'
-                    ? 'bg-emerald-900/30 border-emerald-700 text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-500'
-                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:border-gray-500'
+                    ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 hover:border-emerald-400 dark:hover:border-emerald-500'
+                    : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:border-gray-400 dark:hover:border-gray-500'
                   }
                   disabled:opacity-50 disabled:cursor-not-allowed
                 `}
@@ -670,44 +632,44 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                 )}
               </button>
               {conv.visibility === 'public' ? (
-                <p className="text-xs text-gray-600">
+                <p className="text-xs text-gray-400 dark:text-gray-600">
                   Anyone with the link can view this conversation.{' '}
                   <button
                     onClick={copyShareLink}
-                    className="text-indigo-500 hover:text-indigo-400 transition-colors"
+                    className="text-indigo-600 dark:text-indigo-500 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
                   >
                     {linkCopied ? '✓ Link copied!' : 'Copy link'}
                   </button>
                 </p>
               ) : (
-                <p className="text-xs text-gray-600">Only you can see this conversation.</p>
+                <p className="text-xs text-gray-400 dark:text-gray-600">Only you can see this conversation.</p>
               )}
             </div>
 
             {/* Save indicator / error */}
             {savedField && (
-              <p className="text-xs text-green-400">✓ {savedField.charAt(0).toUpperCase() + savedField.slice(1)} saved.</p>
+              <p className="text-xs text-green-600 dark:text-green-400">✓ {savedField.charAt(0).toUpperCase() + savedField.slice(1)} saved.</p>
             )}
             {patchError && (
-              <p className="text-xs text-red-400">{patchError}</p>
+              <p className="text-xs text-red-600 dark:text-red-400">{patchError}</p>
             )}
 
             {/* Delete section */}
-            <div className="border-t border-gray-800 pt-4">
+            <div className="border-t border-gray-200 dark:border-gray-800 pt-4">
               {!showDeleteConfirm ? (
                 <button
                   onClick={() => setShowDeleteConfirm(true)}
-                  className="text-sm text-red-500 hover:text-red-400 transition-colors"
+                  className="text-sm text-red-500 hover:text-red-600 dark:hover:text-red-400 transition-colors"
                 >
                   Delete conversation…
                 </button>
               ) : (
                 <div className="flex flex-col gap-2">
-                  <p className="text-sm text-gray-300">
-                    Permanently delete <span className="font-medium text-gray-100">"{conv.title}"</span> and all its messages?
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                    Permanently delete <span className="font-medium text-gray-900 dark:text-gray-100">"{conv.title}"</span> and all its messages?
                   </p>
                   {deleteError && (
-                    <p className="text-xs text-red-400">{deleteError}</p>
+                    <p className="text-xs text-red-600 dark:text-red-400">{deleteError}</p>
                   )}
                   <div className="flex items-center gap-2">
                     <button
@@ -721,7 +683,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                     <button
                       onClick={() => { setShowDeleteConfirm(false); setDeleteError(null) }}
                       disabled={isDeleting}
-                      className="px-3 py-1.5 text-sm rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-50"
+                      className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
                     >
                       Cancel
                     </button>
@@ -732,19 +694,19 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
           </div>
 
           {/* Editing hints */}
-          <p className="text-xs text-gray-600 -mt-3">
+          <p className="text-xs text-gray-400 dark:text-gray-600 -mt-3">
             Click on the title or tags to edit them inline. Press Enter or click away to save.
           </p>
 
           {/* Divider */}
-          <div className="border-t border-gray-800" />
+          <div className="border-t border-gray-200 dark:border-gray-800" />
 
           {/* Message history */}
           <div className="flex flex-col gap-1 mb-1">
             <span className="text-xs text-gray-500 uppercase tracking-wide">
               Message history ({conv.messages.length})
             </span>
-            <p className="text-xs text-gray-600">Read-only — message history cannot be edited.</p>
+            <p className="text-xs text-gray-400 dark:text-gray-600">Read-only — message history cannot be edited.</p>
           </div>
 
           <div className="flex flex-col gap-4 pb-8">

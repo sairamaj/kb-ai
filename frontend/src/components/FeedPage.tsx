@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FeedItem, FeedResponse } from '../types/conversation'
+import { ThemeToggle } from './ThemeToggle'
 
 interface Props {
   onOpenConversation: (id: string) => void
@@ -36,11 +37,11 @@ function FeedCard({ item, onClick }: { item: FeedItem; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="w-full text-left bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-xl px-5 py-4 transition-colors group"
+      className="w-full text-left bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:border-gray-400 dark:hover:border-gray-600 rounded-xl px-5 py-4 transition-colors group"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0 flex flex-col gap-2">
-          <p className="text-sm font-medium text-gray-100 group-hover:text-white transition-colors line-clamp-2 leading-snug">
+          <p className="text-sm font-medium text-gray-900 dark:text-gray-100 group-hover:text-black dark:group-hover:text-white transition-colors line-clamp-2 leading-snug">
             {item.title}
           </p>
 
@@ -48,18 +49,18 @@ function FeedCard({ item, onClick }: { item: FeedItem; onClick: () => void }) {
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1.5">
               <AuthorAvatar name={item.author_name} avatarUrl={item.author_avatar} />
-              <span className="text-xs text-gray-400">{item.author_name}</span>
+              <span className="text-xs text-gray-600 dark:text-gray-400">{item.author_name}</span>
             </div>
-            <span className="text-gray-700 text-xs">·</span>
+            <span className="text-gray-300 dark:text-gray-700 text-xs">·</span>
             <span className="text-xs text-gray-500">{formatDate(item.updated_at)}</span>
-            <span className="text-gray-700 text-xs">·</span>
+            <span className="text-gray-300 dark:text-gray-700 text-xs">·</span>
             <span className="text-xs text-gray-500">
               {item.message_count} msg{item.message_count !== 1 ? 's' : ''}
             </span>
             {item.replay_count > 0 && (
               <>
-                <span className="text-gray-700 text-xs">·</span>
-                <span className="text-xs text-indigo-500" title="Times replayed">▶ {item.replay_count}</span>
+                <span className="text-gray-300 dark:text-gray-700 text-xs">·</span>
+                <span className="text-xs text-indigo-600 dark:text-indigo-500" title="Times replayed">▶ {item.replay_count}</span>
               </>
             )}
           </div>
@@ -70,7 +71,7 @@ function FeedCard({ item, onClick }: { item: FeedItem; onClick: () => void }) {
               {item.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="text-xs bg-indigo-900/30 text-indigo-400 border border-indigo-900/50 px-1.5 py-0.5 rounded-full"
+                  className="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/50 px-1.5 py-0.5 rounded-full"
                 >
                   {tag}
                 </span>
@@ -81,7 +82,7 @@ function FeedCard({ item, onClick }: { item: FeedItem; onClick: () => void }) {
 
         {/* Arrow */}
         <svg
-          className="w-4 h-4 text-gray-600 group-hover:text-gray-400 transition-colors flex-shrink-0 mt-0.5"
+          className="w-4 h-4 text-gray-400 dark:text-gray-600 group-hover:text-gray-600 dark:group-hover:text-gray-400 transition-colors flex-shrink-0 mt-0.5"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -124,25 +125,28 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-gray-950 text-gray-100">
+    <div className="flex flex-col min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
       {/* Header */}
-      <header className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-950/90 backdrop-blur-sm">
+      <header className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-950/90 backdrop-blur-sm">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold">
+            <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold text-white">
               KB
             </div>
             <span className="font-semibold text-sm">Prompt KB</span>
           </div>
-          <div className="w-px h-4 bg-gray-700" />
-          <span className="text-sm text-gray-400">Discover</span>
+          <div className="w-px h-4 bg-gray-300 dark:bg-gray-700" />
+          <span className="text-sm text-gray-600 dark:text-gray-400">Discover</span>
         </div>
-        <button
-          onClick={onGoToLogin}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
-        >
-          Sign in
-        </button>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <button
+            onClick={onGoToLogin}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
+          >
+            Sign in
+          </button>
+        </div>
       </header>
 
       {/* Body */}
@@ -152,7 +156,7 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
           {/* Hero */}
           <div className="flex flex-col gap-1.5">
             <h1 className="text-2xl font-bold tracking-tight">Public Conversations</h1>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               Explore AI conversations shared by the Prompt KB community.
             </p>
           </div>
@@ -163,14 +167,14 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
               <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
             </div>
           ) : error ? (
-            <div className="text-sm text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-4 py-3">
+            <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
               {error}
             </div>
           ) : !feed || feed.items.length === 0 ? (
             <div className="flex flex-col items-center py-20 gap-3 text-center">
               <span className="text-4xl">💬</span>
-              <p className="text-gray-400 font-medium">No public conversations yet</p>
-              <p className="text-sm text-gray-600">
+              <p className="text-gray-600 dark:text-gray-400 font-medium">No public conversations yet</p>
+              <p className="text-sm text-gray-500">
                 Be the first to share one by marking a saved conversation as public.
               </p>
               <button
@@ -182,7 +186,7 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
             </div>
           ) : (
             <>
-              <p className="text-xs text-gray-600 -mt-2">
+              <p className="text-xs text-gray-400 dark:text-gray-600 -mt-2">
                 {feed.total} public conversation{feed.total !== 1 ? 's' : ''}
                 {feed.pages > 1 ? ` · Page ${feed.page} of ${feed.pages}` : ''}
               </p>
@@ -203,7 +207,7 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
                   <button
                     onClick={() => goToPage(feed.page - 1)}
                     disabled={feed.page <= 1}
-                    className="px-3 py-1.5 text-sm rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     ← Previous
                   </button>
@@ -222,7 +226,7 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
                       }, [])
                       .map((p, i) =>
                         p === '...' ? (
-                          <span key={`ellipsis-${i}`} className="px-1 text-gray-600 text-sm">…</span>
+                          <span key={`ellipsis-${i}`} className="px-1 text-gray-400 dark:text-gray-600 text-sm">…</span>
                         ) : (
                           <button
                             key={p}
@@ -230,7 +234,7 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
                             className={`w-8 h-8 text-sm rounded-lg transition-colors ${
                               p === feed.page
                                 ? 'bg-indigo-600 text-white'
-                                : 'bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700'
+                                : 'bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
                             }`}
                           >
                             {p}
@@ -241,7 +245,7 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
                   <button
                     onClick={() => goToPage(feed.page + 1)}
                     disabled={feed.page >= feed.pages}
-                    className="px-3 py-1.5 text-sm rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Next →
                   </button>
@@ -253,7 +257,7 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
       </div>
 
       {/* Footer CTA */}
-      <footer className="border-t border-gray-800 px-4 py-6">
+      <footer className="border-t border-gray-200 dark:border-gray-800 px-4 py-6">
         <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-sm text-gray-500">
             Save and share your own AI conversations with Prompt KB.

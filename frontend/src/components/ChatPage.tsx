@@ -6,6 +6,7 @@ import { ChatInput } from './ChatInput'
 import { EmptyState } from './EmptyState'
 import { TypingIndicator } from './TypingIndicator'
 import { SaveDialog } from './SaveDialog'
+import { ThemeToggle } from './ThemeToggle'
 import type { Message } from '../types/chat'
 
 type ProviderId = 'openai' | 'gemini'
@@ -79,7 +80,7 @@ const TEMPLATES = [
       'Keep lessons under ~200 words unless asked to go deeper.',
     customInstructions:
       '- Use analogies sparingly.\n' +
-      '- Always end with: “Quick check:” followed by 1 question.\n',
+      '- Always end with: "Quick check:" followed by 1 question.\n',
     starterPrompts: ['Teach me how JWT works in this app.', 'Explain Postgres full-text search with tsvector.'],
   },
 ] as const
@@ -179,7 +180,6 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
   }
 
   async function handleSend(text: string) {
-    // Snapshot full conversation history + new user message as context.
     await sendWithContext(text, messages)
   }
 
@@ -193,7 +193,6 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
     setShowContinueBanner(false)
   }
 
-  // Derive a default title from the first user message.
   const defaultTitle = (() => {
     const first = messages.find((m) => m.role === 'user')
     if (!first) return ''
@@ -246,26 +245,27 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-950 text-gray-100">
+    <div className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-800 flex-shrink-0">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold">
+          <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold text-white">
             KB
           </div>
           <span className="font-semibold text-sm">Prompt KB</span>
         </div>
         <div className="flex items-center gap-2">
+          <ThemeToggle />
           <button
             onClick={() => setShowCustomize((v) => !v)}
-            className="text-xs text-gray-400 hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-800 border border-gray-800"
+            className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-800"
           >
             Customize
           </button>
           {messages.length > 0 && !isStreaming && (
             <button
               onClick={() => { setSaveSuccess(false); setShowSaveDialog(true) }}
-              className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors px-2 py-1 rounded hover:bg-gray-800 border border-indigo-700 hover:border-indigo-500"
+              className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 border border-indigo-300 dark:border-indigo-700 hover:border-indigo-400 dark:hover:border-indigo-500"
             >
               Save
             </button>
@@ -273,21 +273,21 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
           <button
             onClick={handleNewChat}
             disabled={messages.length === 0}
-            className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded hover:bg-gray-800"
+            className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             New chat
           </button>
           <button
             onClick={onOpenLibrary}
-            className="text-xs text-gray-400 hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-800"
+            className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             Library
           </button>
-          <div className="flex items-center gap-2 border-l border-gray-800 pl-3 ml-1">
-            <span className="text-sm text-gray-300">{user?.display_name}</span>
+          <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-800 pl-3 ml-1">
+            <span className="text-sm text-gray-700 dark:text-gray-300">{user?.display_name}</span>
             <button
               onClick={logout}
-              className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
             >
               Sign out
             </button>
@@ -296,13 +296,13 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
       </header>
 
       {showCustomize && (
-        <div className="border-b border-gray-800 bg-gray-950/60">
+        <div className="border-b border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-950/60">
           <div className="max-w-2xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-gray-900/40 border border-gray-800 rounded-xl p-3">
+            <div className="bg-gray-50/40 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-semibold text-gray-200">Model</div>
+                <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">Model</div>
                 <div className="text-[11px] text-gray-500">
-                  Saved as <span className="text-gray-400">{settings.provider}:{settings.model}</span>
+                  Saved as <span className="text-gray-600 dark:text-gray-400">{settings.provider}:{settings.model}</span>
                 </div>
               </div>
               <div className="mt-2 flex gap-2">
@@ -314,7 +314,7 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
                     const nextModel = p?.models?.[0] ?? (nextProvider === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o-mini')
                     setSettings((s) => ({ ...s, provider: nextProvider, model: nextModel }))
                   }}
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   {providers.map((p) => (
                     <option key={p.id} value={p.id} disabled={!p.enabled}>
@@ -325,7 +325,7 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
                 <select
                   value={settings.model}
                   onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))}
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   {(providers.find((p) => p.id === settings.provider)?.models ?? []).map((m) => (
                     <option key={m} value={m}>
@@ -335,17 +335,17 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
                 </select>
               </div>
               <div className="mt-3 text-[11px] text-gray-500 leading-relaxed">
-                Tip: Gemini requires <span className="text-gray-400">GEMINI_API_KEY</span> in <span className="text-gray-400">backend/.env</span>.
+                Tip: Gemini requires <span className="text-gray-600 dark:text-gray-400">GEMINI_API_KEY</span> in <span className="text-gray-600 dark:text-gray-400">backend/.env</span>.
               </div>
             </div>
 
-            <div className="bg-gray-900/40 border border-gray-800 rounded-xl p-3">
-              <div className="text-xs font-semibold text-gray-200">Templates</div>
+            <div className="bg-gray-50/40 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
+              <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">Templates</div>
               <div className="mt-2 flex gap-2">
                 <select
                   value={settings.templateId}
                   onChange={(e) => setSettings((s) => ({ ...s, templateId: e.target.value }))}
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   {TEMPLATES.map((t) => (
                     <option key={t.id} value={t.id}>
@@ -378,7 +378,7 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
                       handleNewChat()
                       void sendWithContext(p, [])
                     }}
-                    className="px-2.5 py-1 text-[11px] bg-gray-800 text-gray-300 rounded-full border border-gray-700 hover:border-gray-500 hover:text-gray-100 transition-colors"
+                    className="px-2.5 py-1 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-full border border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
                   >
                     {p}
                   </button>
@@ -386,29 +386,29 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
               </div>
             </div>
 
-            <div className="bg-gray-900/40 border border-gray-800 rounded-xl p-3 md:col-span-2">
+            <div className="bg-gray-50/40 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 rounded-xl p-3 md:col-span-2">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <div className="text-xs font-semibold text-gray-200">System prompt (sample included)</div>
+                  <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">System prompt (sample included)</div>
                   <textarea
                     value={settings.systemPrompt}
                     onChange={(e) => setSettings((s) => ({ ...s, systemPrompt: e.target.value }))}
                     rows={5}
-                    className="mt-2 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="mt-2 w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
                 <div>
-                  <div className="text-xs font-semibold text-gray-200">Custom instructions (sample included)</div>
+                  <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">Custom instructions (sample included)</div>
                   <textarea
                     value={settings.customInstructions}
                     onChange={(e) => setSettings((s) => ({ ...s, customInstructions: e.target.value }))}
                     rows={5}
-                    className="mt-2 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="mt-2 w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
               </div>
               <div className="mt-2 text-[11px] text-gray-500">
-                These are sent as a single <span className="text-gray-400">system</span> message on every turn.
+                These are sent as a single <span className="text-gray-600 dark:text-gray-400">system</span> message on every turn.
               </div>
             </div>
           </div>
@@ -422,13 +422,13 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
         ) : (
           <div className="max-w-2xl mx-auto flex flex-col gap-4">
             {showContinueBanner && continuedFromTitle && (
-              <div className="flex items-center justify-between text-xs text-indigo-400 bg-indigo-900/20 border border-indigo-800 rounded-lg px-3 py-2">
+              <div className="flex items-center justify-between text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg px-3 py-2">
                 <span>
-                  Continuing from <span className="font-medium text-indigo-300">"{continuedFromTitle}"</span> — new messages will be saved as a new conversation.
+                  Continuing from <span className="font-medium text-indigo-700 dark:text-indigo-300">"{continuedFromTitle}"</span> — new messages will be saved as a new conversation.
                 </span>
                 <button
                   onClick={() => setShowContinueBanner(false)}
-                  className="ml-4 text-indigo-500 hover:text-indigo-300 transition-colors shrink-0"
+                  className="ml-4 text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors shrink-0"
                   aria-label="Dismiss"
                 >
                   ✕
@@ -436,11 +436,11 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
               </div>
             )}
             {showDraftNotice && (
-              <div className="flex items-center justify-between text-xs text-amber-400 bg-amber-900/20 border border-amber-800 rounded-lg px-3 py-2">
+              <div className="flex items-center justify-between text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
                 <span>Draft restored — your previous conversation was recovered.</span>
                 <button
                   onClick={() => setShowDraftNotice(false)}
-                  className="ml-4 text-amber-500 hover:text-amber-300 transition-colors shrink-0"
+                  className="ml-4 text-amber-600 dark:text-amber-500 hover:text-amber-800 dark:hover:text-amber-300 transition-colors shrink-0"
                   aria-label="Dismiss"
                 >
                   ✕
@@ -448,12 +448,12 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
               </div>
             )}
             {saveSuccess && (
-              <div className="flex items-center justify-between text-xs text-green-400 bg-green-900/20 border border-green-800 rounded-lg px-3 py-2">
+              <div className="flex items-center justify-between text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-3 py-2">
                 <span>Conversation saved to your knowledge base.</span>
                 {savedConversationId && (
                   <button
                     onClick={() => onOpenConversation(savedConversationId)}
-                    className="ml-4 text-green-300 hover:text-green-100 underline underline-offset-2 transition-colors shrink-0"
+                    className="ml-4 text-green-700 dark:text-green-300 hover:text-green-900 dark:hover:text-green-100 underline underline-offset-2 transition-colors shrink-0"
                   >
                     View / Edit details →
                   </button>
@@ -467,7 +467,7 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
               <TypingIndicator />
             )}
             {error && (
-              <div className="text-xs text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">
+              <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
                 {error}
               </div>
             )}
@@ -479,7 +479,7 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
       {/* Input bar */}
       <div className="flex-shrink-0 px-4 pb-4 pt-2 max-w-2xl mx-auto w-full">
         <ChatInput onSend={handleSend} disabled={isStreaming} />
-        <p className="text-center text-xs text-gray-600 mt-2">
+        <p className="text-center text-xs text-gray-400 dark:text-gray-600 mt-2">
           Shift+Enter for a new line · Enter to send
         </p>
       </div>

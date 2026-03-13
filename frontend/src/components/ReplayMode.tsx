@@ -82,11 +82,11 @@ export function ReplayMode({ conv, onExit, onReplayCountUpdated }: Props) {
 
   if (totalTurns === 0) {
     return (
-      <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center gap-4 text-gray-400">
+      <div className="min-h-screen bg-white dark:bg-gray-950 flex flex-col items-center justify-center gap-4 text-gray-500 dark:text-gray-400">
         <p className="text-sm">This conversation has no messages to replay.</p>
         <button
           onClick={onExit}
-          className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+          className="text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 transition-colors"
         >
           ← Back to conversation
         </button>
@@ -95,17 +95,17 @@ export function ReplayMode({ conv, onExit, onReplayCountUpdated }: Props) {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-950 text-gray-100">
+    <div className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-800 flex-shrink-0">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={onExit}
-            className="text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
+            className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             ← Exit Replay
           </button>
-          <div className="w-px h-4 bg-gray-700" />
+          <div className="w-px h-4 bg-gray-300 dark:bg-gray-700" />
           <div className="flex items-center gap-2">
             <div className="w-5 h-5 rounded bg-indigo-600 flex items-center justify-center">
               <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -116,20 +116,20 @@ export function ReplayMode({ conv, onExit, onReplayCountUpdated }: Props) {
                 />
               </svg>
             </div>
-            <span className="text-sm font-medium text-indigo-300">Replay Mode</span>
+            <span className="text-sm font-medium text-indigo-600 dark:text-indigo-300">Replay Mode</span>
           </div>
         </div>
-        <span className="text-sm text-gray-400 truncate max-w-xs">{conv.title}</span>
+        <span className="text-sm text-gray-600 dark:text-gray-400 truncate max-w-xs">{conv.title}</span>
       </header>
 
       {/* Progress bar */}
-      <div className="flex-shrink-0 px-4 py-3 border-b border-gray-800/50 bg-gray-900/50">
+      <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200/50 dark:border-gray-800/50 bg-white/50 dark:bg-gray-900/50">
         <div className="max-w-2xl mx-auto flex flex-col gap-2">
           <div className="flex items-center justify-between text-xs text-gray-500">
             <span>Turn {currentIndex + 1} of {totalTurns}</span>
             <span>{Math.round(progressPct)}% complete</span>
           </div>
-          <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+          <div className="h-1.5 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
             <div
               className="h-full bg-indigo-500 rounded-full transition-all duration-300 ease-out"
               style={{ width: `${progressPct}%` }}
@@ -146,8 +146,8 @@ export function ReplayMode({ conv, onExit, onReplayCountUpdated }: Props) {
                     idx === currentIndex
                       ? 'w-2.5 h-2.5 bg-indigo-400'
                       : idx < currentIndex
-                      ? 'w-2 h-2 bg-indigo-700 hover:bg-indigo-500'
-                      : 'w-2 h-2 bg-gray-700 hover:bg-gray-500'
+                      ? 'w-2 h-2 bg-indigo-400 dark:bg-indigo-700 hover:bg-indigo-500'
+                      : 'w-2 h-2 bg-gray-300 dark:bg-gray-700 hover:bg-gray-400 dark:hover:bg-gray-500'
                   }`}
                   title={`Go to turn ${idx + 1}`}
                 />
@@ -168,7 +168,7 @@ export function ReplayMode({ conv, onExit, onReplayCountUpdated }: Props) {
             />
           )}
           {!current.assistant && (
-            <p className="text-xs text-gray-600 text-center italic mt-2">
+            <p className="text-xs text-gray-400 dark:text-gray-600 text-center italic mt-2">
               No assistant response for this turn.
             </p>
           )}
@@ -176,13 +176,13 @@ export function ReplayMode({ conv, onExit, onReplayCountUpdated }: Props) {
       </div>
 
       {/* Navigation footer */}
-      <div className="flex-shrink-0 border-t border-gray-800 bg-gray-900/80 px-4 py-4">
+      <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 px-4 py-4">
         <div className="max-w-2xl mx-auto flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <button
             onClick={goPrev}
             disabled={currentIndex === 0}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 hover:border-gray-500 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:border-gray-400 dark:hover:border-gray-500 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -192,7 +192,7 @@ export function ReplayMode({ conv, onExit, onReplayCountUpdated }: Props) {
 
           <button
             onClick={() => setCurrentIndex(0)}
-            className="text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1 rounded hover:bg-gray-800"
+            className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
             title="Restart from the beginning"
           >
             ↺ Restart
@@ -220,9 +220,9 @@ export function ReplayMode({ conv, onExit, onReplayCountUpdated }: Props) {
             </button>
           )}
         </div>
-        <p className="text-center text-xs text-gray-600">
-          Use <kbd className="px-1 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400 font-mono text-[10px]">←</kbd>{' '}
-          <kbd className="px-1 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400 font-mono text-[10px]">→</kbd>{' '}
+        <p className="text-center text-xs text-gray-400 dark:text-gray-600">
+          Use <kbd className="px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 font-mono text-[10px]">←</kbd>{' '}
+          <kbd className="px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 font-mono text-[10px]">→</kbd>{' '}
           arrow keys to navigate
         </p>
         </div>

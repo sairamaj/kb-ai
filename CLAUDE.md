@@ -118,3 +118,4 @@ User stories are in `stories.md`, organized by phase. Requirements are in `requi
 5. Public Sharing (SHARE) — SHARE-01 done, SHARE-02 done
 6. Collections (COL)
 7. Search v2 (SEARCH — pgvector semantic search)
+11. Duplicate & Theme (Phase 11) — THEME-01 done

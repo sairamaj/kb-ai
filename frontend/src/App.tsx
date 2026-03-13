@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { ThemeProvider } from './context/ThemeContext'
 import { LoginPage } from './pages/LoginPage'
 import { ChatPage } from './components/ChatPage'
 import { ConversationDetailPage } from './components/ConversationDetailPage'
@@ -98,7 +99,7 @@ function AppShell() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center">
         <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
       </div>
     )
@@ -143,8 +144,10 @@ function AppShell() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppShell />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <AppShell />
+      </AuthProvider>
+    </ThemeProvider>
   )
 }
