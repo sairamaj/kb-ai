@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -76,6 +77,7 @@ class Conversation(Base):
     visibility: Mapped[str] = mapped_column(Enum(Visibility, name="visibility_enum"), nullable=False, default=Visibility.private)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String(64)), nullable=False, default=list)
     replay_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

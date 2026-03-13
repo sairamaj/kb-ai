@@ -52,6 +52,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
 
   // Visibility toggle state
   const [visibilitySaving, setVisibilitySaving] = useState(false)
+  const [pinSaving, setPinSaving] = useState(false)
 
   // Transient save confirmation
   const [savedField, setSavedField] = useState<string | null>(null)
@@ -75,6 +76,32 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
   // Copy link
   const [linkCopied, setLinkCopied] = useState(false)
   const linkCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Export
+  const [exporting, setExporting] = useState(false)
+
+  async function exportAsMarkdown() {
+    if (!conv) return
+    setExporting(true)
+    try {
+      const res = await fetch(`/api/conversations/${id}/export?format=md`, { credentials: 'include' })
+      if (!res.ok) throw new Error(`Export failed (${res.status})`)
+      const blob = await res.blob()
+      const disposition = res.headers.get('Content-Disposition')
+      const match = disposition?.match(/filename="?([^";\n]+)"?/)
+      const filename = match ? match[1].trim() : `${conv.title.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80)}.md`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setPatchError('Export failed.')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   function copyShareLink() {
     if (!conv) return
@@ -233,6 +260,13 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
     setVisibilitySaving(false)
   }
 
+  async function togglePin() {
+    if (!conv || pinSaving) return
+    setPinSaving(true)
+    await patch({ is_pinned: !conv.is_pinned }, 'pin')
+    setPinSaving(false)
+  }
+
   async function addToCollection(collectionId: string) {
     if (!conv || collectionAction) return
     setCollectionAction({ collectionId })
@@ -388,6 +422,21 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
               )}
             </button>
           )}
+          <button
+            onClick={() => { void exportAsMarkdown() }}
+            disabled={exporting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-xs text-gray-300 transition-colors disabled:opacity-50"
+            title="Download as Markdown"
+          >
+            {exporting ? (
+              <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            )}
+            Export
+          </button>
           <button
             onClick={() => setReplayMode(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
@@ -562,6 +611,41 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                   </select>
                 )}
               </div>
+            </div>
+
+            {/* Pin toggle */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-gray-500 uppercase tracking-wide">Pinned</span>
+              <button
+                onClick={() => { void togglePin() }}
+                disabled={pinSaving}
+                className={`
+                  self-start flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors
+                  ${conv.is_pinned
+                    ? 'bg-amber-900/30 border-amber-700 text-amber-300 hover:bg-amber-900/50 hover:border-amber-500'
+                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:border-gray-500'
+                  }
+                  disabled:opacity-50 disabled:cursor-not-allowed
+                `}
+                title={conv.is_pinned ? 'Unpin from Library top' : 'Pin to top of Library'}
+              >
+                {conv.is_pinned ? (
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                  </svg>
+                )}
+                <span>{conv.is_pinned ? 'Pinned' : 'Not pinned'}</span>
+                {pinSaving && (
+                  <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin" />
+                )}
+              </button>
+              <p className="text-xs text-gray-600">
+                {conv.is_pinned ? 'This conversation appears at the top of your Library.' : 'Pin to show this at the top of your Library.'}
+              </p>
             </div>
 
             {/* Visibility toggle */}

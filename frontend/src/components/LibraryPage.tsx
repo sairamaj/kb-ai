@@ -54,6 +54,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [pinningConvId, setPinningConvId] = useState<string | null>(null)
   const [collectionAction, setCollectionAction] = useState<{ convId: string; collectionId: string } | null>(null)
 
   const [collections, setCollections] = useState<CollectionSummary[]>([])
@@ -67,6 +68,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
   const [createCollectionError, setCreateCollectionError] = useState<string | null>(null)
   const [collectionVisibilityUpdating, setCollectionVisibilityUpdating] = useState<string | null>(null)
   const [copiedCollectionId, setCopiedCollectionId] = useState<string | null>(null)
+  const [exportingCollectionId, setExportingCollectionId] = useState<string | null>(null)
 
   const [showDeleteAccount, setShowDeleteAccount] = useState(false)
   const [isDeletingAccount, setIsDeletingAccount] = useState(false)
@@ -190,6 +192,30 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
     })
   }
 
+  async function exportCollection(collectionId: string, format: 'md' | 'zip', collectionName: string) {
+    setExportingCollectionId(collectionId)
+    try {
+      const res = await fetch(`/api/collections/${collectionId}/export?format=${format}`, { credentials: 'include' })
+      if (!res.ok) throw new Error(`Export failed (${res.status})`)
+      const blob = await res.blob()
+      const disposition = res.headers.get('Content-Disposition')
+      const match = disposition?.match(/filename="?([^";\n]+)"?/)
+      const ext = format === 'zip' ? '.zip' : '.md'
+      const safeName = collectionName.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80)
+      const filename = match ? match[1].trim() : `${safeName}${ext}`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setCollectionsError('Export failed.')
+    } finally {
+      setExportingCollectionId(null)
+    }
+  }
+
   function toggleTag(tag: string) {
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
@@ -219,6 +245,26 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
       )
     } finally {
       setCollectionAction(null)
+    }
+  }
+
+  async function togglePin(convId: string) {
+    const conv = conversations.find((c) => c.id === convId)
+    if (!conv) return
+    setPinningConvId(convId)
+    try {
+      const res = await fetch(`/api/conversations/${convId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_pinned: !conv.is_pinned } as { is_pinned: boolean }),
+      })
+      if (!res.ok) throw new Error('Failed to update pin')
+      setConversations((prev) =>
+        prev.map((c) => (c.id === convId ? { ...c, is_pinned: !c.is_pinned } : c)),
+      )
+    } finally {
+      setPinningConvId(null)
     }
   }
 
@@ -605,7 +651,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                     onClick={() => onOpenConversation(conv.id)}
                     className="w-full text-left px-4 py-3.5"
                   >
-                    <div className="flex items-start justify-between gap-3 pr-8">
+                    <div className="flex items-start justify-between gap-3 pr-16">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-100 truncate group-hover:text-white transition-colors">
                           {conv.title}
@@ -693,6 +739,25 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                       </select>
                     )}
                   </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void togglePin(conv.id) }}
+                    disabled={pinningConvId === conv.id}
+                    aria-label={conv.is_pinned ? 'Unpin' : 'Pin'}
+                    title={conv.is_pinned ? 'Unpin' : 'Pin to top'}
+                    className="absolute top-3 right-9 opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-gray-600 hover:text-amber-400 hover:bg-amber-900/20 transition-all disabled:opacity-50"
+                  >
+                    {pinningConvId === conv.id ? (
+                      <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin block" />
+                    ) : conv.is_pinned ? (
+                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                      </svg>
+                    )}
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); setDeleteTargetId(conv.id) }}
                     aria-label="Delete conversation"
@@ -786,6 +851,33 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void exportCollection(col.id, 'md', col.name)}
+                      disabled={exportingCollectionId === col.id}
+                      className="text-xs px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-gray-200 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                      title="Export collection as single Markdown file"
+                    >
+                      {exportingCollectionId === col.id ? (
+                        <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                      ) : (
+                        <>
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          MD
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void exportCollection(col.id, 'zip', col.name)}
+                      disabled={exportingCollectionId === col.id}
+                      className="text-xs px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-gray-200 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                      title="Export collection as ZIP of Markdown files"
+                    >
+                      ZIP
+                    </button>
                     {col.visibility === 'public' && (
                       <button
                         type="button"
@@ -794,9 +886,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                         title="Copy shareable link"
                       >
                         {copiedCollectionId === col.id ? (
-                          <>
-                            <span className="text-green-400">Copied!</span>
-                          </>
+                          <span className="text-green-400">Copied!</span>
                         ) : (
                           <>
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -1,6 +1,10 @@
+import io
 import uuid
+import zipfile
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth import CurrentUser
 from app.database import get_db
+from app.export_utils import conversation_to_markdown, sanitize_filename
 from app.models import Collection, Conversation, ConversationCollection, Message, Visibility
 
 router = APIRouter(prefix="/collections", tags=["collections"])
@@ -214,6 +219,77 @@ async def get_collection(
         name=c.name,
         visibility=c.visibility,
         created_at=c.created_at.isoformat(),
+    )
+
+
+@router.get("/{collection_id}/export", response_class=Response)
+async def export_collection(
+    collection_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    format: Literal["md", "zip"] = Query(default="md", description="Export as single Markdown or ZIP of .md files"),
+) -> Response:
+    """Export a collection as Markdown (single file) or ZIP (one .md per conversation). User must own the collection."""
+    col_uuid = _parse_uuid(collection_id, "collection_id")
+    owner_uuid = uuid.UUID(current_user.sub)
+    col_result = await db.execute(
+        select(Collection).where(Collection.id == col_uuid, Collection.owner_id == owner_uuid)
+    )
+    col = col_result.scalar_one_or_none()
+    if col is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    conv_result = await db.execute(
+        select(Conversation)
+        .join(ConversationCollection, ConversationCollection.conversation_id == Conversation.id)
+        .where(ConversationCollection.collection_id == col_uuid)
+        .options(selectinload(Conversation.messages))
+        .order_by(Conversation.updated_at.desc())
+    )
+    conversations = list(conv_result.scalars().unique().all())
+
+    if format == "md":
+        lines = [
+            f"# Collection: {col.name}",
+            "",
+            f"- **Conversations:** {len(conversations)}",
+            f"- **Collection created:** {col.created_at.isoformat()}",
+            "",
+            "---",
+            "",
+        ]
+        for conv in conversations:
+            lines.append(f"## Conversation: {conv.title}")
+            lines.append("")
+            lines.append(conversation_to_markdown(conv))
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+        body = "\n".join(lines).strip() + "\n"
+        filename = sanitize_filename(col.name) + ".md"
+        return PlainTextResponse(
+            content=body,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # format == "zip"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        seen_names: set[str] = set()
+        for conv in conversations:
+            base = sanitize_filename(conv.title)
+            name = f"{base}.md"
+            if name in seen_names:
+                name = f"{base}_{str(conv.id)[:8]}.md"
+            seen_names.add(name)
+            zf.writestr(name, conversation_to_markdown(conv))
+    buf.seek(0)
+    filename = sanitize_filename(col.name) + ".zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

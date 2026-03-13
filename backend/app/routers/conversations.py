@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth import CurrentUser
 from app.database import get_db
+from app.export_utils import conversation_to_markdown, sanitize_filename
 from app.models import Collection, Conversation, ConversationCollection, Message, MessageRole, Visibility
 from app.openai_client import embed_text, has_openai_key
 
@@ -41,6 +43,7 @@ class ConversationResponse(BaseModel):
     visibility: str
     message_count: int
     replay_count: int
+    is_pinned: bool = False
     created_at: str
     updated_at: str
     collection_ids: list[str] = []
@@ -61,6 +64,7 @@ class ConversationDetailResponse(BaseModel):
     model: str
     visibility: str
     replay_count: int
+    is_pinned: bool = False
     created_at: str
     updated_at: str
     messages: list[MessageResponse]
@@ -85,6 +89,7 @@ class UpdateConversationRequest(BaseModel):
     title: str | None = None
     tags: list[str] | None = None
     visibility: str | None = None
+    is_pinned: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +138,7 @@ def _to_detail_response(conv: Conversation) -> ConversationDetailResponse:
         model=conv.model,
         visibility=conv.visibility,
         replay_count=conv.replay_count,
+        is_pinned=conv.is_pinned,
         created_at=conv.created_at.isoformat(),
         updated_at=conv.updated_at.isoformat(),
         messages=[
@@ -220,6 +226,7 @@ async def save_conversation(
         visibility=conversation.visibility,
         message_count=len(msgs),
         replay_count=conversation.replay_count,
+        is_pinned=conversation.is_pinned,
         created_at=conversation.created_at.isoformat(),
         updated_at=conversation.updated_at.isoformat(),
         collection_ids=[],
@@ -318,7 +325,11 @@ async def list_conversations(
             )
         if tags:
             stmt = stmt.where(Conversation.tags.overlap(tags))
-        stmt = stmt.order_by(literal_column("similarity").desc()).limit(limit).offset(offset)
+        # Pinned first, then by similarity
+        stmt = stmt.order_by(
+            Conversation.is_pinned.desc(),
+            literal_column("similarity").desc(),
+        ).limit(limit).offset(offset)
         rows = (await db.execute(stmt)).all()
         conv_ids = [row[0].id for row in rows]
         collection_map: dict[uuid.UUID, list[str]] = {cid: [] for cid in conv_ids}
@@ -339,6 +350,7 @@ async def list_conversations(
                 visibility=row[0].visibility,
                 message_count=row[1],
                 replay_count=row[0].replay_count,
+                is_pinned=row[0].is_pinned,
                 created_at=row[0].created_at.isoformat(),
                 updated_at=row[0].updated_at.isoformat(),
                 collection_ids=collection_map.get(row[0].id, []),
@@ -384,10 +396,15 @@ async def list_conversations(
         "oldest": Conversation.updated_at.asc(),
         "most_replayed": Conversation.replay_count.desc(),
     }[sort]
+    # Pinned first, then by rank/sort
     if q:
-        stmt = stmt.order_by(literal_column("_rank").desc().nulls_last(), _sort_clause)
+        stmt = stmt.order_by(
+            Conversation.is_pinned.desc(),
+            literal_column("_rank").desc().nulls_last(),
+            _sort_clause,
+        )
     else:
-        stmt = stmt.order_by(_sort_clause)
+        stmt = stmt.order_by(Conversation.is_pinned.desc(), _sort_clause)
     stmt = stmt.limit(limit).offset(offset)
 
     rows = (await db.execute(stmt)).all()
@@ -413,6 +430,7 @@ async def list_conversations(
             visibility=conv.visibility,
             message_count=msg_count,
             replay_count=conv.replay_count,
+            is_pinned=conv.is_pinned,
             created_at=conv.created_at.isoformat(),
             updated_at=conv.updated_at.isoformat(),
             collection_ids=collection_map.get(conv.id, []),
@@ -433,6 +451,31 @@ async def get_conversation(
     if conv is None or str(conv.owner_id) != current_user.sub:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return _to_detail_response(conv)
+
+
+@router.get("/{conversation_id}/export", response_class=PlainTextResponse)
+async def export_conversation(
+    conversation_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    format: Literal["md"] = Query(default="md", description="Export format (md only)"),
+) -> Response:
+    """Export a conversation as Markdown. User must own the conversation."""
+    if format != "md":
+        raise HTTPException(status_code=400, detail="Only format=md is supported")
+    conv_uuid = _parse_uuid(conversation_id)
+    conv = await _fetch_conversation(conv_uuid, db)
+    if conv is None or str(conv.owner_id) != current_user.sub:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    body = conversation_to_markdown(conv)
+    filename = sanitize_filename(conv.title) + ".md"
+    return PlainTextResponse(
+        content=body,
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.get("/{conversation_id}/public", response_model=PublicConversationDetailResponse)
@@ -532,6 +575,8 @@ async def update_conversation(
         conv.tags = body.tags
     if body.visibility is not None:
         conv.visibility = Visibility(body.visibility)
+    if body.is_pinned is not None:
+        conv.is_pinned = body.is_pinned
 
     conv.updated_at = datetime.now(timezone.utc)
 

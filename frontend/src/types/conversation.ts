@@ -13,6 +13,7 @@ export interface ConversationSummary {
   visibility: 'public' | 'private'
   message_count: number
   replay_count: number
+  is_pinned?: boolean
   created_at: string
   updated_at: string
   collection_ids: string[]
@@ -27,6 +28,7 @@ export interface ConversationDetail {
   model: string
   visibility: 'public' | 'private'
   replay_count: number
+  is_pinned?: boolean
   created_at: string
   updated_at: string
   messages: ConversationMessage[]
@@ -37,6 +39,7 @@ export interface UpdateConversationPayload {
   title?: string
   tags?: string[]
   visibility?: 'public' | 'private'
+  is_pinned?: boolean
 }
 
 export interface PublicConversationDetail {
