@@ -40,6 +40,12 @@ class MessageRole(str, enum.Enum):
     system = "system"
 
 
+class UserRole(str, enum.Enum):
+    administrator = "administrator"
+    pro = "pro"
+    starter = "starter"
+
+
 # ---------------------------------------------------------------------------
 # User
 # ---------------------------------------------------------------------------
@@ -53,6 +59,11 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(256), nullable=False)
     display_name: Mapped[str] = mapped_column(String(256), nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(
+        Enum(UserRole, name="user_role_enum"),
+        nullable=False,
+        default=UserRole.starter,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     conversations: Mapped[list["Conversation"]] = relationship("Conversation", back_populates="owner", cascade="all, delete-orphan")

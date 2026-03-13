@@ -4,9 +4,10 @@ import secrets
 import uuid
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, create_access_token
 from app.config import (
@@ -18,7 +19,7 @@ from app.config import (
     REDIRECT_BASE_URL,
 )
 from app.database import get_db
-from app.models import OAuthProvider, User
+from app.models import OAuthProvider, User, UserRole
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -199,6 +200,7 @@ async def oauth_callback(
                 email=email,
                 display_name=display_name,
                 avatar_url=avatar_url,
+                role=UserRole.starter,
             )
             db.add(user)
         else:
@@ -233,12 +235,20 @@ async def oauth_callback(
 # ---------------------------------------------------------------------------
 
 @router.get("/me")
-async def get_me(current_user: CurrentUser) -> dict:
+async def get_me(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    result = await db.execute(select(User).where(User.id == uuid.UUID(current_user.sub)))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found; please log in again")
     return {
         "id": current_user.sub,
         "email": current_user.email,
         "display_name": current_user.display_name,
         "avatar_url": current_user.avatar_url,
+        "role": user.role.value,
     }
 
 

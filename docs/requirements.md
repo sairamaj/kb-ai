@@ -79,7 +79,7 @@ Browser (React SPA)
 
 ## 5. Data Model (core entities)
 
-- **User** — id, oauth_provider, oauth_sub, email, display_name, avatar_url, created_at
+- **User** — id, oauth_provider, oauth_sub, email, display_name, avatar_url, role (`administrator`/`pro`/`starter`), created_at
 - **Conversation** — id, owner_id (FK User), title, model, visibility (public/private), tags[], created_at, updated_at
 - **Message** — id, conversation_id (FK Conversation), role (user/assistant/system), content, created_at
 - **Collection** — id, owner_id (FK User), name, visibility, created_at

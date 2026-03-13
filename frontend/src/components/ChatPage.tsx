@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useChat, streamChatReply } from '../hooks/useChat'
 import { useAuth } from '../context/AuthContext'
+import { USER_ROLE_LABELS } from '../types/auth'
 import { MessageBubble } from './MessageBubble'
 import { ChatInput } from './ChatInput'
 import { EmptyState } from './EmptyState'
@@ -284,7 +285,14 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
             Library
           </button>
           <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-800 pl-3 ml-1">
-            <span className="text-sm text-gray-700 dark:text-gray-300">{user?.display_name}</span>
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              {user?.display_name}
+              {user?.role && (
+                <span className="ml-1.5 text-[11px] text-gray-500 dark:text-gray-400 font-normal">
+                  ({USER_ROLE_LABELS[user.role]})
+                </span>
+              )}
+            </span>
             <button
               onClick={logout}
               className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"

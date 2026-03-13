@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { USER_ROLE_LABELS } from '../types/auth'
 import { ThemeToggle } from './ThemeToggle'
 import type { CollectionSummary, CreateCollectionPayload, UpdateCollectionPayload } from '../types/collection'
 import type { ConversationSummary } from '../types/conversation'
@@ -355,7 +356,14 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
         </div>
         <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-800 pl-3">
           <ThemeToggle />
-          <span className="text-sm text-gray-700 dark:text-gray-300">{user?.display_name}</span>
+          <span className="text-sm text-gray-700 dark:text-gray-300">
+            {user?.display_name}
+            {user?.role && (
+              <span className="ml-1.5 text-[11px] text-gray-500 dark:text-gray-400 font-normal">
+                ({USER_ROLE_LABELS[user.role]})
+              </span>
+            )}
+          </span>
           <button
             onClick={logout}
             className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
