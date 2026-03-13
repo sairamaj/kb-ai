@@ -1,0 +1,59 @@
+---
+description: Project context for Prompt Knowledge Base — what the app is, stack, and where things live
+alwaysApply: true
+---
+
+# Prompt Knowledge Base — Project Context
+
+Use this when working in this repo so you don't need the user to re-describe the project.
+
+## What This Project Is
+
+**Prompt Knowledge Base** is a web app that replaces traditional notes with saved AI conversations. Users:
+- Chat with an OpenAI-powered assistant
+- Save conversations to a personal knowledge base
+- Replay conversations step-by-step (Replay Mode)
+- Organize with tags and collections
+
+## Tech Stack
+
+- **Frontend:** React, TypeScript, Vite. Dev server on port 5173.
+- **Backend:** FastAPI (Python), uvicorn. API on port 8000.
+- **Database:** PostgreSQL (port 5432), async SQLAlchemy, Alembic migrations.
+- **Auth:** OAuth (Google, GitHub) + JWT in httpOnly cookie. No token in frontend JS.
+- **Chat:** OpenAI API; backend streams via SSE to frontend.
+
+## Running the App
+
+- **Full stack:** `docker-compose up` (frontend :5173, backend :8000, DB :5432).
+- **Frontend only:** `cd frontend && npm install && npm run dev`.
+- **Backend only:** `cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload --port 8000`.
+- **Migrations:** `cd backend && alembic upgrade head`. New migration: `alembic revision -m "describe change"`.
+- **Lint (frontend):** `cd frontend && npm run lint` (zero warnings policy).
+
+## Architecture (High Level)
+
+- Browser hits only `localhost:5173`. All `/api/*` is proxied by Vite to the backend (prefix stripped). Same-origin cookies, no CORS.
+- Backend: `/auth/*` (OAuth + JWT), `/chat/*` (SSE streaming), `/health`. Full conversation history is sent from frontend on every chat turn; no server-side chat session state.
+- DB: All FKs use `ondelete="CASCADE"`. PKs are UUID v4.
+
+## Where Things Live
+
+- **Backend:** `backend/app/` — `main.py`, `config.py`, `database.py`, `models.py`, `auth.py`, `routers/auth.py`, `routers/chat.py`. Migrations: `backend/alembic/versions/`.
+- **Frontend:** `frontend/src/` — `App.tsx`, `context/AuthContext.tsx`, `hooks/useChat.ts`, `types/`, `components/`, `pages/LoginPage.tsx`.
+- **Docs:** `CLAUDE.md` (detailed dev/arch reference), `README.MD` (user-facing run instructions), `stories.md` (user stories by phase), `requirements.md` (requirements).
+
+## Data Model (Short)
+
+- **User** → has many **Conversation** and **Collection**.
+- **Conversation** → has many **Message**.
+- **Conversation** ↔ **Collection**: many-to-many via `ConversationCollection`.
+- `Conversation.tags`: PostgreSQL `ARRAY(String)`. `Conversation.replay_count`: BigInteger.
+
+## Conventions
+
+- Env: copy `backend/.env.example` to `backend/.env` (OPENAI_API_KEY, SECRET_KEY, OAuth client IDs if used).
+- OAuth redirect URIs: `http://localhost:5173/api/auth/{provider}/callback`.
+- When adding schema or behavior, check `stories.md` and `requirements.md` for phases and acceptance criteria.
+
+For full architecture details, dev commands, and file-by-file notes, see **CLAUDE.md** in the repo root.
