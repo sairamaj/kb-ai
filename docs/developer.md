@@ -127,9 +127,9 @@ The in-app help chatbot uses a single, curated knowledge source so answers stay 
 
 Users can open the help chatbot from anywhere in the main app:
 
-- **Help button:** Click **Help** in the header (Chat, Library, or Conversation detail). The button is styled in amber to distinguish it from the main chat.
-- **Route:** Navigating to `/help` opens the help page directly. The help UI is labeled **App help** and is visually distinct from the main knowledge-base chat (amber accent, question-mark icon, and copy that states it is for application questions only).
-- **Chat UI (CB-07):** The help page provides a chat-style interface: message list (user and assistant bubbles), text input, and send. Only the help-chat endpoint is called; no main conversation or conversation endpoints are used.
+- **Help popup:** The help UI is a **chat popup in the right lower corner** (floating panel). A persistent **floating button** (amber circle with question-mark icon) in the bottom-right opens and closes the popup.
+- **Deep-link:** Navigating to `/help` opens the app (chat page) with the help popup already open; the URL is then replaced with `/`.
+- **Chat UI (CB-07):** The popup provides a chat-style interface: message list (user and assistant bubbles), text input, and send. It is labeled **App help** and is visually distinct from the main knowledge-base chat (amber accent, question-mark icon). Only the help-chat endpoint is called; no main conversation or conversation endpoints are used.
 
 #### Help-chat API (CB-02)
 

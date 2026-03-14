@@ -8,7 +8,7 @@ import { LibraryPage } from './components/LibraryPage'
 import { PublicConversationPage } from './components/PublicConversationPage'
 import { PublicCollectionPage } from './components/PublicCollectionPage'
 import { FeedPage } from './components/FeedPage'
-import { HelpPage } from './components/HelpPage'
+import { HelpPopup } from './components/HelpPopup'
 import type { Message } from './types/chat'
 
 type AppPage =
@@ -18,7 +18,6 @@ type AppPage =
   | { name: 'public-conversation'; id: string }
   | { name: 'public-collection'; id: string }
   | { name: 'feed' }
-  | { name: 'help' }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -32,7 +31,7 @@ function parsePath(pathname: string): AppPage {
     return { name: 'public-collection', id: publicColMatch[1] }
   }
   if (pathname === '/feed') return { name: 'feed' }
-  if (pathname === '/help') return { name: 'help' }
+  if (pathname === '/help') return { name: 'chat' }
   return { name: 'chat' }
 }
 
@@ -40,13 +39,13 @@ function pageToPath(page: AppPage): string {
   if (page.name === 'public-conversation') return `/c/${page.id}`
   if (page.name === 'public-collection') return `/collections/public/${page.id}`
   if (page.name === 'feed') return '/feed'
-  if (page.name === 'help') return '/help'
   return '/'
 }
 
 function AppShell() {
   const { user, isLoading } = useAuth()
   const [page, setPage] = useState<AppPage>(() => parsePath(window.location.pathname))
+  const [helpPopupOpen, setHelpPopupOpen] = useState(false)
 
   // Sync URL when page changes.
   useEffect(() => {
@@ -55,6 +54,14 @@ function AppShell() {
       history.pushState({}, '', target)
     }
   }, [page])
+
+  // Deep-link /help: open help popup and show chat page.
+  useEffect(() => {
+    if (window.location.pathname === '/help') {
+      setHelpPopupOpen(true)
+      history.replaceState({}, '', '/')
+    }
+  }, [])
 
   // Handle browser back / forward.
   useEffect(() => {
@@ -111,47 +118,47 @@ function AppShell() {
 
   if (!user) return <LoginPage onGoToFeed={() => setPage({ name: 'feed' })} />
 
-  if (page.name === 'help') {
-    return (
-      <HelpPage onBack={() => setPage({ name: 'chat' })} />
-    )
-  }
-
   if (page.name === 'library') {
     return (
-      <LibraryPage
-        onBack={() => setPage({ name: 'chat' })}
-        onOpenHelp={() => setPage({ name: 'help' })}
-        onOpenConversation={(id) => setPage({ name: 'conversation', id, from: 'library' })}
-      />
+      <>
+        <LibraryPage
+          onBack={() => setPage({ name: 'chat' })}
+          onOpenConversation={(id) => setPage({ name: 'conversation', id, from: 'library' })}
+        />
+        <HelpPopup open={helpPopupOpen} onOpen={() => setHelpPopupOpen(true)} onClose={() => setHelpPopupOpen(false)} />
+      </>
     )
   }
 
   if (page.name === 'conversation') {
     const backPage: AppPage = page.from === 'library' ? { name: 'library' } : { name: 'chat' }
     return (
-      <ConversationDetailPage
-        id={page.id}
-        onBack={() => setPage(backPage)}
-        onOpenHelp={() => setPage({ name: 'help' })}
-        onDeleted={() => setPage(backPage)}
-        onContinue={(messages, title) =>
-          setPage({ name: 'chat', initialMessages: messages, continuedFromTitle: title })
-        }
-      />
+      <>
+        <ConversationDetailPage
+          id={page.id}
+          onBack={() => setPage(backPage)}
+          onDeleted={() => setPage(backPage)}
+          onContinue={(messages, title) =>
+            setPage({ name: 'chat', initialMessages: messages, continuedFromTitle: title })
+          }
+        />
+        <HelpPopup open={helpPopupOpen} onOpen={() => setHelpPopupOpen(true)} onClose={() => setHelpPopupOpen(false)} />
+      </>
     )
   }
 
   // page.name === 'chat'
   const chatPage = page as { name: 'chat'; initialMessages?: Message[]; continuedFromTitle?: string }
   return (
-    <ChatPage
-      onOpenConversation={(id: string) => setPage({ name: 'conversation', id, from: 'chat' })}
-      onOpenLibrary={() => setPage({ name: 'library' })}
-      onOpenHelp={() => setPage({ name: 'help' })}
-      initialMessages={chatPage.initialMessages}
-      continuedFromTitle={chatPage.continuedFromTitle}
-    />
+    <>
+      <ChatPage
+        onOpenConversation={(id: string) => setPage({ name: 'conversation', id, from: 'chat' })}
+        onOpenLibrary={() => setPage({ name: 'library' })}
+        initialMessages={chatPage.initialMessages}
+        continuedFromTitle={chatPage.continuedFromTitle}
+      />
+      <HelpPopup open={helpPopupOpen} onOpen={() => setHelpPopupOpen(true)} onClose={() => setHelpPopupOpen(false)} />
+    </>
   )
 }
 

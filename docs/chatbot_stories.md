@@ -131,7 +131,7 @@ This document defines a phased set of implementation stories for the in-app help
 
 ---
 
-**Implementation (CB-06):** Entry point: **Help** button in the header on Chat, Library, and Conversation detail pages; route `/help`. Help page is labeled **App help** with amber styling and a question-mark icon. See `docs/developer.md` (§ In-app help entry point).
+**Implementation (CB-06):** Entry point: a **floating button** in the right lower corner opens the help chat popup. Route `/help` opens the app with the popup open. The popup is labeled **App help** with amber styling and a question-mark icon. See `docs/developer.md` (§ In-app help entry point).
 
 ### CB-07 — Provide a chat-style UI for the help chatbot
 
@@ -152,7 +152,7 @@ This document defines a phased set of implementation stories for the in-app help
 - Given the help API returns a stream, the UI shows the response as it streams (or as a single block if the implementation uses a non-streaming response).
 - Given a check of network requests, the help UI only calls the help-chat endpoint, not the main chat/conversation endpoint.
 
-**Implementation (CB-07):** The help page (`frontend/src/components/HelpPage.tsx`) provides a chat-style UI: message list (user and assistant) using `MessageBubble`, `ChatInput` with a help-specific placeholder, and send. It calls only `POST /api/help/chat`; responses are shown as a single block (backend is non-streaming). A typing indicator is shown while the request is in flight.
+**Implementation (CB-07):** The help UI is a **right-lower-corner chat popup** (`frontend/src/components/HelpPopup.tsx`) containing the shared chat body (`frontend/src/components/HelpChat.tsx`): message list (user and assistant) using `MessageBubble`, `ChatInput` with a help-specific placeholder, and send. It calls only `POST /api/help/chat`; responses are shown as a single block (backend is non-streaming). A typing indicator is shown while the request is in flight. Escape key closes the popup.
 
 ---
 
