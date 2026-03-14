@@ -13,7 +13,8 @@ from sqlalchemy.orm import selectinload
 from app.auth import CurrentUser
 from app.database import get_db
 from app.export_utils import conversation_to_markdown, sanitize_filename
-from app.models import Collection, Conversation, ConversationCollection, Message, Visibility
+from app.limits import PRO_COLLECTION_LIMIT, STARTER_COLLECTION_LIMIT
+from app.models import Collection, Conversation, ConversationCollection, Message, User, UserRole, Visibility
 
 router = APIRouter(prefix="/collections", tags=["collections"])
 
@@ -152,12 +153,47 @@ async def create_collection(
             detail="visibility must be 'public' or 'private'",
         )
 
+    # AUTHZ-09 / AUTHZ-10 / AUTHZ-11: Enforce collection limits by role.
+    owner_uuid = uuid.UUID(current_user.sub)
+    user_result = await db.execute(select(User).where(User.id == owner_uuid))
+    user = user_result.scalar_one_or_none()
+    if user and user.role != UserRole.administrator:
+        # AUTHZ-11: Explicit bypass — administrators are never subject to collection limits.
+        if user.role == UserRole.pro:
+            count_result = await db.execute(
+                select(func.count(Collection.id)).where(Collection.owner_id == owner_uuid)
+            )
+            current_count = count_result.scalar() or 0
+            if current_count >= PRO_COLLECTION_LIMIT:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Collection limit reached for your plan. You can have up to {PRO_COLLECTION_LIMIT} collections. "
+                        "Delete an existing collection to create a new one."
+                    ),
+                )
+        elif user.role == UserRole.starter:
+            if (user.lifetime_collections_created or 0) >= STARTER_COLLECTION_LIMIT:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Collection limit reached for your plan. Starter accounts can create up to {STARTER_COLLECTION_LIMIT} collections. "
+                        "Upgrade to Pro for more collections."
+                    ),
+                )
+
     collection = Collection(
-        owner_id=uuid.UUID(current_user.sub),
+        owner_id=owner_uuid,
         name=name,
         visibility=visibility,
     )
     db.add(collection)
+    await db.flush()
+
+    # AUTHZ-10: Increment lifetime count for Starter users (never decremented on delete).
+    if user and user.role == UserRole.starter:
+        user.lifetime_collections_created = (user.lifetime_collections_created or 0) + 1
+
     await db.commit()
     await db.refresh(collection)
 
