@@ -136,7 +136,7 @@ Users can open the help chatbot from anywhere in the main app:
 The help chatbot is exposed via a dedicated endpoint so the frontend can send questions without using the main conversation chat.
 
 - **URL:** `POST /api/help/chat` (from the frontend; backend path is `POST /help/chat` after proxy rewrite).
-- **Authentication:** Optional. If the request includes a valid auth cookie, the user is recognized for future personalization (Phase 2). Unauthenticated requests receive only generic/product-level answers.
+- **Authentication:** Optional. Unauthenticated access is supported. See **Security and unauthenticated access** below for scope.
 - **Request body (JSON):**
   - **message** (string, required) — The user’s question.
   - **history** (array, optional) — **CB-08 multi-turn:** Prior turns in this help session. Each element is `{ "role": "user" | "assistant", "content": string }`. The backend uses this as conversation context so follow-ups (e.g. “How do I open it?” after “What is replay mode?”) are answered in context. Stateless: no server-side session; the frontend sends the full history each time. Capped to the last 20 messages (10 turns) to avoid token overflow.
@@ -153,3 +153,9 @@ Every help response is grounded in the help knowledge source so the bot does not
 - **Role names and limits:** Answers use the exact role names (Administrator, Pro, Starter) and correct limit semantics: Starter = lifetime creation caps; Pro = current total; Administrator = unlimited.
 - **Limit values:** The backend injects the current configured limits from `backend/app/config.py` (e.g. `LIMIT_PRO_CONVERSATIONS`, `LIMIT_STARTER_CONVERSATIONS`) into the prompt so answers cite accurate numbers. The model is instructed to note that limits are configurable per deployment.
 - **Out-of-scope:** Questions not about the application are handled by a polite redirect (see CB-04); the bot does not attempt to answer them from general knowledge.
+
+#### Security and unauthenticated access (Phase 4 — CB-09, CB-10)
+
+- **Unauthenticated access:** The help-chat endpoint can be called without authentication. Unauthenticated users receive only **public/product-level** answers: product vision, feature list, role names and general limits (e.g. “Starter has a limit of 5 conversations”), and where to find more info. They do **not** receive “your plan,” “your usage,” or any personalized data. For questions like “What are my limits?”, the response describes limits in general (by role) and does not include personalized counts.
+- **Authenticated access:** When the request includes a valid auth cookie, the backend may attach the user’s role and usage (conversation/collection counts) and personalize answers (e.g. “With your Starter plan you currently have 3 of 5 conversations”) per CB-05.
+- **Security (CB-09):** Responses are grounded in the help knowledge source and must not expose secrets, API keys, undocumented internal URLs or paths, or invented features/limits. The system prompt enforces this; the backend also runs a lightweight response check and, if sensitive-looking patterns are detected, returns a safe generic message instead of the raw model output.

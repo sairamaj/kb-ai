@@ -14,6 +14,13 @@ off-topic questions or expose internal paths or technical details in redirects.
 CB-05: For authenticated requests, inject role and usage (conversation/collection
 counts) so the bot can personalize answers (e.g. "With your Starter plan you
 currently have 3 of 5 conversations"). No PII or internal identifiers in the prompt.
+
+CB-09: Responses must not expose secrets, API keys, undocumented internal paths, or
+invented features/limits. Grounding and optional response validation enforce this.
+
+CB-10: Unauthenticated requests receive only public/product-level answers; no
+"your plan", "your usage", or user-specific data. Authenticated requests may be
+personalized per CB-05.
 """
 
 import uuid
@@ -187,8 +194,37 @@ def _format_user_context_block(ctx: HelpUserContext) -> str:
     )
 
 
+# CB-09: Patterns that suggest sensitive data leakage; if found in a response, we return a safe fallback.
+_SENSITIVE_PATTERNS = (
+    "api_key",
+    "api key:",
+    "secret_key",
+    "secret key:",
+    "password:",
+    "bearer eyj",  # JWT prefix
+    "your user id is",
+    "user_id:",
+)
+
+
+def _sanitize_response(answer: str) -> str:
+    """
+    CB-09: Ensure no sensitive or invented information is exposed.
+    If the model output contains patterns that suggest leakage (secrets, internal ids),
+    return a safe generic message instead of the raw response.
+    """
+    lower = answer.lower()
+    for pattern in _SENSITIVE_PATTERNS:
+        if pattern in lower:
+            return (
+                "I can only share information from the application's help documentation. "
+                "Please ask about features, roles, limits, or how to use the app."
+            )
+    return answer
+
+
 def _build_system_prompt(user_context: HelpUserContext | None) -> str:
-    """Build the system prompt from help knowledge, with strict grounding (CB-03). CB-05: include user context when present."""
+    """Build the system prompt from help knowledge, with strict grounding (CB-03). CB-05: include user context when present. CB-09/CB-10: security and unauthenticated scope."""
     knowledge = get_help_knowledge()
     grounding = (
         "You are the in-app help assistant for the Prompt Knowledge Base application.\n\n"
@@ -199,6 +235,8 @@ def _build_system_prompt(user_context: HelpUserContext | None) -> str:
         "Pro limits are on CURRENT total (deleting frees a slot). "
         "When mentioning limit numbers, use the \"Current configured limits\" block below; "
         "if asked about \"the\" limits, state they are configurable per deployment and give these values.\n\n"
+        "SECURITY (CB-09): Do not include in any response: API keys, secrets, passwords, internal URLs or paths not listed in the help knowledge, or invented features or limit values. "
+        "Base all facts only on the help knowledge and the configured limits below.\n\n"
         "Keep answers concise. You may summarize or paraphrase the official content but stay consistent with it.\n\n"
         "If the question is not about this application, do not answer it; instead give a short, polite redirect "
         "that you only answer questions about this app and suggest example topics (e.g. saving conversations, replay mode, roles and limits).\n\n"
@@ -210,6 +248,13 @@ def _build_system_prompt(user_context: HelpUserContext | None) -> str:
     base = grounding + knowledge
     if user_context is not None:
         base += "\n\n" + _format_user_context_block(user_context)
+    else:
+        # CB-10: Unauthenticated request — restrict to public/product overview only.
+        base += (
+            "\n\nUnauthenticated user: Do not refer to \"your plan\", \"your usage\", or any user-specific data. "
+            "Describe limits and features in general terms only (e.g. by role: Starter, Pro, Administrator). "
+            "Do not personalize; the user is not logged in."
+        )
     return base
 
 
@@ -239,7 +284,8 @@ async def help_chat(
     if not has_history and not await _is_question_about_app(message):
         return HelpChatResponse(answer=OUT_OF_SCOPE_REDIRECT)
 
-    # CB-05: For authenticated users, load role and usage so the bot can personalize answers.
+    # CB-05 / CB-10: Only attach user context when authenticated. Unauthenticated requests get help_context=None
+    # so the prompt instructs the model to give only public/product-level answers (no "your plan" or "your usage").
     help_context: HelpUserContext | None = None
     if current_user is not None:
         help_context = await get_help_user_context(uuid.UUID(current_user.sub), db)
@@ -266,5 +312,6 @@ async def help_chat(
         stream=False,
     )
 
-    answer = completion.choices[0].message.content or ""
+    raw_answer = completion.choices[0].message.content or ""
+    answer = _sanitize_response(raw_answer)
     return HelpChatResponse(answer=answer)
