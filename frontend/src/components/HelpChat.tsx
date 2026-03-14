@@ -12,10 +12,49 @@ function nextId(): string {
   return `help-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+const APP_OVERVIEW = `Prompt Knowledge Base replaces a traditional notes-based knowledge base with saved AI conversations. You chat with an AI assistant, save conversations to your library, and revisit them later—including step-by-step "replay" mode—to rebuild understanding over time. You can organize conversations in collections and share them as public or private.`
+
+const SUGGESTED_PROMPTS = [
+  'How do I save a conversation?',
+  'What is replay mode and how do I use it?',
+  'How do I search or find conversations in the Library?',
+  'What are collections and how do I create one?',
+  'What are my conversation and collection limits?',
+  'How do I make a conversation public or private?',
+]
+
+function SuggestedPromptsList({
+  onSelect,
+  disabled,
+  compact = false,
+}: {
+  onSelect: (prompt: string) => void
+  disabled: boolean
+  compact?: boolean
+}) {
+  return (
+    <ul className={`flex flex-col gap-2 ${compact ? 'max-h-40 overflow-y-auto' : ''}`}>
+      {SUGGESTED_PROMPTS.map((prompt) => (
+        <li key={prompt}>
+          <button
+            type="button"
+            onClick={() => onSelect(prompt)}
+            disabled={disabled}
+            className="w-full text-left px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-200 dark:hover:border-amber-800 text-gray-700 dark:text-gray-300 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {prompt}
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 export function HelpChat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showSuggestedList, setShowSuggestedList] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   async function handleSend(text: string) {
@@ -75,13 +114,24 @@ export function HelpChat() {
     }
   }
 
+  function handleSelectPrompt(prompt: string) {
+    handleSend(prompt)
+    setShowSuggestedList(false)
+  }
+
   return (
     <>
       <div className="flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-3 min-h-0">
         {messages.length === 0 && (
-          <div className="text-center py-6 text-gray-500 dark:text-gray-400 text-sm">
-            <p className="font-medium text-gray-700 dark:text-gray-300 mb-1">Application help</p>
-            <p>Ask about saving conversations, replay mode, library, collections, or your plan limits.</p>
+          <div className="py-4 text-gray-500 dark:text-gray-400 text-sm">
+            <p className="font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Application help</p>
+            <div className="mb-4 px-3 py-3 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-800/50">
+              <p className="text-xs font-semibold text-amber-800 dark:text-amber-200 mb-1.5">Brief overview</p>
+              <p className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">{APP_OVERVIEW}</p>
+            </div>
+            <p className="text-center mb-2">Ask about saving conversations, replay mode, library, collections, or your plan limits.</p>
+            <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Suggested questions — click to ask:</p>
+            <SuggestedPromptsList onSelect={handleSelectPrompt} disabled={isLoading} />
           </div>
         )}
         {messages.map((msg) => (
@@ -95,12 +145,42 @@ export function HelpChat() {
         )}
         <div ref={bottomRef} />
       </div>
-      <div className="flex-shrink-0 px-3 pb-3 pt-2 border-t border-gray-200 dark:border-gray-800">
-        <ChatInput
-          onSend={handleSend}
-          disabled={isLoading}
-          placeholder="Ask about the app… (Enter to send, Shift+Enter for new line)"
-        />
+      <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 flex flex-col">
+        {messages.length > 0 && (
+          <div className="px-3 pt-2 pb-1">
+            {showSuggestedList ? (
+              <div className="mb-2">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Suggested questions — select one:</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSuggestedList(false)}
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                    aria-label="Close suggested questions"
+                  >
+                    Close
+                  </button>
+                </div>
+                <SuggestedPromptsList onSelect={handleSelectPrompt} disabled={isLoading} compact />
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowSuggestedList(true)}
+                className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 font-medium"
+              >
+                Suggested questions…
+              </button>
+            )}
+          </div>
+        )}
+        <div className="px-3 pb-3 pt-2">
+          <ChatInput
+            onSend={handleSend}
+            disabled={isLoading}
+            placeholder="Ask about the app… (Enter to send, Shift+Enter for new line)"
+          />
+        </div>
       </div>
     </>
   )
