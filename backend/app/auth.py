@@ -86,6 +86,33 @@ async def get_current_user(
 CurrentUser = Annotated[TokenPayload, Depends(get_current_user)]
 
 
+async def get_optional_user(
+    access_token: Annotated[str | None, Cookie()] = None,
+    db: AsyncSession = Depends(get_db),
+) -> TokenPayload | None:
+    """
+    Return the current user if authenticated, else None.
+    Use for endpoints that support both authenticated and unauthenticated access (e.g. help chat).
+    """
+    if not access_token:
+        return None
+    try:
+        payload = _verify_token(access_token)
+    except HTTPException:
+        return None
+    try:
+        user_id = uuid.UUID(payload.sub)
+    except ValueError:
+        return None
+    result = await db.execute(select(User.id).where(User.id == user_id))
+    if result.scalar_one_or_none() is None:
+        return None
+    return payload
+
+
+OptionalUser = Annotated[TokenPayload | None, Depends(get_optional_user)]
+
+
 async def require_admin(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),

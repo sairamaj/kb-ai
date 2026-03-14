@@ -6,7 +6,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 import app.models  # noqa: F401, E402 — register models on Base.metadata
-from app.routers import auth, chat, conversations, feed, collections, users  # noqa: E402
+from app.routers import auth, chat, conversations, feed, collections, users, help  # noqa: E402
 
 app = FastAPI(title="Prompt KB API", version="0.1.0")
 
@@ -24,6 +24,7 @@ app.include_router(conversations.router)
 app.include_router(feed.router)
 app.include_router(collections.router)
 app.include_router(users.router)
+app.include_router(help.router)
 
 
 @app.get("/health")

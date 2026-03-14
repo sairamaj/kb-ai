@@ -111,3 +111,27 @@ The same `\dt` and `SELECT` queries work there as well.
   ```cmd
   choco install postgresql --params '/Password:postgres'
   ```
+
+---
+
+### Help chatbot — knowledge source (CB-01)
+
+The in-app help chatbot uses a single, curated knowledge source so answers stay accurate and aligned with official documentation.
+
+- **Location:** `backend/app/help_knowledge/content.md` (and `backend/app/help_knowledge/README.md` for full description).
+- **Source docs:** Content is derived from `docs/requirements.md`, this file (`docs/developer.md`), and `docs/authorization.MD`.
+- **Loading at runtime:** Use `from app.help_knowledge import get_help_knowledge` to get the full text; the help-chat API uses this to ground responses.
+- **Updating:** When any of the source docs change, update `content.md` accordingly and restart the backend (or clear the in-memory cache). See `backend/app/help_knowledge/README.md` for the update process.
+
+#### Help-chat API (CB-02)
+
+The help chatbot is exposed via a dedicated endpoint so the frontend can send questions without using the main conversation chat.
+
+- **URL:** `POST /api/help/chat` (from the frontend; backend path is `POST /help/chat` after proxy rewrite).
+- **Authentication:** Optional. If the request includes a valid auth cookie, the user is recognized for future personalization (Phase 2). Unauthenticated requests receive only generic/product-level answers.
+- **Request body (JSON):**
+  - **message** (string, required) — The user’s question.
+  - **session_id** (string, optional) — Reserved for multi-turn help sessions (CB-08); currently unused.
+- **Response (JSON):**
+  - **answer** (string) — The help bot’s reply, grounded in the help knowledge source.
+- **Behaviour:** The endpoint does not create or update conversations, collections, or user records; it is read-only for help purposes.
