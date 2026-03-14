@@ -6,7 +6,7 @@ import uuid
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, create_access_token
@@ -19,7 +19,13 @@ from app.config import (
     REDIRECT_BASE_URL,
 )
 from app.database import get_db
-from app.models import OAuthProvider, User, UserRole
+from app.limits import (
+    PRO_COLLECTION_LIMIT,
+    PRO_CONVERSATION_LIMIT,
+    STARTER_COLLECTION_LIMIT,
+    STARTER_CONVERSATION_LIMIT,
+)
+from app.models import Collection, Conversation, OAuthProvider, User, UserRole
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -243,12 +249,46 @@ async def get_me(
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found; please log in again")
+    owner_uuid = user.id
+
+    # AUTHZ-12: Usage for UI (conversations and collections used vs limit).
+    usage: dict
+    if user.role == UserRole.administrator:
+        usage = {
+            "conversations_used": 0,
+            "conversations_limit": None,
+            "collections_used": 0,
+            "collections_limit": None,
+        }
+    elif user.role == UserRole.pro:
+        conv_count = await db.execute(
+            select(func.count(Conversation.id)).where(Conversation.owner_id == owner_uuid)
+        )
+        coll_count = await db.execute(
+            select(func.count(Collection.id)).where(Collection.owner_id == owner_uuid)
+        )
+        usage = {
+            "conversations_used": conv_count.scalar() or 0,
+            "conversations_limit": PRO_CONVERSATION_LIMIT,
+            "collections_used": coll_count.scalar() or 0,
+            "collections_limit": PRO_COLLECTION_LIMIT,
+        }
+    else:
+        # Starter: use lifetime counts and starter limits
+        usage = {
+            "conversations_used": user.lifetime_conversations_created or 0,
+            "conversations_limit": STARTER_CONVERSATION_LIMIT,
+            "collections_used": user.lifetime_collections_created or 0,
+            "collections_limit": STARTER_COLLECTION_LIMIT,
+        }
+
     return {
         "id": current_user.sub,
         "email": current_user.email,
         "display_name": current_user.display_name,
         "avatar_url": current_user.avatar_url,
         "role": user.role.value,
+        "usage": usage,
     }
 
 

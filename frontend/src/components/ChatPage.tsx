@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useChat, streamChatReply } from '../hooks/useChat'
 import { useAuth } from '../context/AuthContext'
 import { USER_ROLE_LABELS } from '../types/auth'
+import { UsageDisplay } from './UsageDisplay'
+import { LimitReachedDialog } from './LimitReachedDialog'
 import { MessageBubble } from './MessageBubble'
 import { ChatInput } from './ChatInput'
 import { EmptyState } from './EmptyState'
@@ -94,10 +97,12 @@ interface Props {
 }
 
 export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, continuedFromTitle }: Props) {
+  const queryClient = useQueryClient()
   const { messages, addMessage, appendToLastAssistant, clearMessages, clearDraft, hasDraft } = useChat(initialMessages)
   const { user, logout } = useAuth()
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [limitReached, setLimitReached] = useState<{ message: string; resource: 'conversation' | 'collection' } | null>(null)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
@@ -228,10 +233,29 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
 
       if (!res.ok) {
         const text = await res.text().catch(() => res.statusText)
+        if (res.status === 403) {
+          let detail: string | undefined
+          try {
+            const data = JSON.parse(text) as { detail?: string }
+            detail = typeof data.detail === 'string' ? data.detail : undefined
+          } catch {
+            detail = text
+          }
+          if (detail && /limit reached|conversation limit/i.test(detail)) {
+            setLimitReached({
+              message: detail,
+              resource: 'conversation',
+            })
+            setShowSaveDialog(false)
+            setIsSaving(false)
+            return
+          }
+        }
         throw new Error(`Save failed (${res.status}): ${text}`)
       }
 
       const saved = await res.json() as { id: string }
+      queryClient.invalidateQueries({ queryKey: ['me'] })
       clearDraft()
       setShowSaveDialog(false)
       setSaveSuccess(true)
@@ -285,6 +309,9 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
             Library
           </button>
           <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-800 pl-3 ml-1">
+            {user?.usage && (
+              <UsageDisplay usage={user.usage} className="hidden sm:inline" />
+            )}
             <span className="text-sm text-gray-700 dark:text-gray-300">
               {user?.display_name}
               {user?.role && (
@@ -498,6 +525,13 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
           onSave={handleSave}
           onCancel={() => setShowSaveDialog(false)}
           isSaving={isSaving}
+        />
+      )}
+      {limitReached && (
+        <LimitReachedDialog
+          message={limitReached.message}
+          resource={limitReached.resource}
+          onClose={() => setLimitReached(null)}
         />
       )}
     </div>

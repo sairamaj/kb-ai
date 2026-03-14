@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
 import { USER_ROLE_LABELS } from '../types/auth'
 import { ThemeToggle } from './ThemeToggle'
+import { UsageDisplay } from './UsageDisplay'
 import type { CollectionSummary, CreateCollectionPayload, UpdateCollectionPayload } from '../types/collection'
 import type { ConversationSummary } from '../types/conversation'
 
@@ -39,6 +41,7 @@ interface Props {
 }
 
 export function LibraryPage({ onBack, onOpenConversation }: Props) {
+  const queryClient = useQueryClient()
   const { user, logout, deleteAccount } = useAuth()
 
   const [libraryView, setLibraryView] = useState<LibraryView>('conversations')
@@ -158,6 +161,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
         throw new Error(message)
       }
       const created = (await res.json()) as CollectionSummary
+      queryClient.invalidateQueries({ queryKey: ['me'] })
       setCollections((prev) => [created, ...prev])
       setShowCreateCollection(false)
       setCreateCollectionName('')
@@ -298,6 +302,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
         credentials: 'include',
       })
       if (!res.ok) throw new Error(`Delete failed (${res.status})`)
+      queryClient.invalidateQueries({ queryKey: ['me'] })
       setConversations((prev) => prev.filter((c) => c.id !== deleteTargetId))
       fetch('/api/conversations/tags', { credentials: 'include' })
         .then((r) => (r.ok ? (r.json() as Promise<string[]>) : Promise.resolve([])))
@@ -356,6 +361,9 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
         </div>
         <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-800 pl-3">
           <ThemeToggle />
+          {user?.usage && (
+            <UsageDisplay usage={user.usage} className="hidden sm:inline" />
+          )}
           <span className="text-sm text-gray-700 dark:text-gray-300">
             {user?.display_name}
             {user?.role && (
@@ -1003,9 +1011,16 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
               </div>
             </div>
             {createCollectionError && (
-              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
-                {createCollectionError}
-              </p>
+              <div className="space-y-2">
+                <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                  {createCollectionError}
+                </p>
+                {/limit reached|collection limit/i.test(createCollectionError) && (
+                  <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg px-3 py-2 text-xs text-indigo-800 dark:text-indigo-200">
+                    Upgrade to Pro for more collections. Contact your administrator or use your plan settings to upgrade.
+                  </div>
+                )}
+              </div>
             )}
             <div className="flex justify-end gap-2">
               <button

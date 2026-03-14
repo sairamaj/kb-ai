@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
 import { USER_ROLE_LABELS } from '../types/auth'
 import { MessageBubble } from './MessageBubble'
 import { ReplayMode } from './ReplayMode'
 import { ThemeToggle } from './ThemeToggle'
+import { UsageDisplay } from './UsageDisplay'
 import { ConversationDetail, UpdateConversationPayload } from '../types/conversation'
 import type { CollectionSummary } from '../types/collection'
 import { Message } from '../types/chat'
@@ -33,6 +35,7 @@ function toUiMessage(m: { id: string; role: string; content: string }): Message 
 }
 
 export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Props) {
+  const queryClient = useQueryClient()
   const { user, logout } = useAuth()
 
   const [conv, setConv] = useState<ConversationDetail | null>(null)
@@ -280,6 +283,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
         credentials: 'include',
       })
       if (!res.ok) throw new Error(`Delete failed (${res.status})`)
+      queryClient.invalidateQueries({ queryKey: ['me'] })
       ;(onDeleted ?? onBack)()
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Delete failed.')
@@ -414,6 +418,9 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
             Replay
           </button>
           <ThemeToggle />
+          {user?.usage && (
+            <UsageDisplay usage={user.usage} className="hidden sm:inline" />
+          )}
           <div className="w-px h-4 bg-gray-300 dark:bg-gray-700" />
           <span className="text-sm text-gray-700 dark:text-gray-300">
             {user?.display_name}
