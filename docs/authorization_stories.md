@@ -268,6 +268,8 @@ This document defines a phased set of implementation stories for role-based auth
 
 ## Phase 6 — Configurable Limits (Optional)
 
+*Implemented: limits are defined in `backend/app/config.py` and read from env (`LIMIT_PRO_CONVERSATIONS`, `LIMIT_STARTER_CONVERSATIONS`, `LIMIT_PRO_COLLECTIONS`, `LIMIT_STARTER_COLLECTIONS`). See `docs/developer.md` § Configurable limits.*
+
 ### AUTHZ-14 — Make role-based limits configurable from a central place
 
 **Goal:** Allow configuration of resource limit values without changing core application logic, while keeping a single source of truth for limits.

@@ -24,6 +24,18 @@ async def admin_only_action(_admin: CurrentAdmin, ...) -> ...:
 
 Role management (e.g. `PATCH /users/{user_id}/role`) is already protected this way.
 
+#### Configurable limits (AUTHZ-14)
+
+Conversation and collection limits for **Pro** and **Starter** roles are defined in one place and can be changed without editing authorization logic.
+
+- **Where they are defined:** `backend/app/config.py`. Values are read from environment variables with sensible defaults.
+- **What to set (optional):**
+  - `LIMIT_PRO_CONVERSATIONS` — max conversations a Pro user can own at once (default: 100)
+  - `LIMIT_STARTER_CONVERSATIONS` — lifetime cap on conversations for Starter (default: 5)
+  - `LIMIT_PRO_COLLECTIONS` — max collections a Pro user can own at once (default: 50)
+  - `LIMIT_STARTER_COLLECTIONS` — lifetime cap on collections for Starter (default: 5)
+- **How to adjust:** Set the variables in `backend/.env` or your deployment environment and restart the backend. Invalid or negative values fall back to the default. All limit checks (conversation creation, collection creation, and `/auth/me` usage) use these values.
+
 #### Changing a user's role (CLI)
 
 From the **backend** directory, run:

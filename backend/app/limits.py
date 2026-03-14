@@ -1,18 +1,23 @@
 """
 Role-based resource limits (AUTHZ-06, AUTHZ-07, AUTHZ-09, AUTHZ-10, AUTHZ-14).
 
-Central place for conversation and collection limits by role.
-Pro: current total; Starter: lifetime cap. Administrators are exempt.
-Values can be made configurable via env/config later.
+Single source of truth: all limit checks use these values. They are read from
+app.config, which loads from environment variables (see config.py). Changing
+limits in config or via env updates enforcement everywhere without code changes.
+
+- Pro: current total owned (deleting frees a slot).
+- Starter: lifetime cap (deleting does not free slots).
+- Administrator: exempt (unlimited).
 """
-# Pro users: max number of conversations they can own at once (current total).
-PRO_CONVERSATION_LIMIT = 100
+from app.config import (
+    LIMIT_PRO_COLLECTIONS,
+    LIMIT_PRO_CONVERSATIONS,
+    LIMIT_STARTER_COLLECTIONS,
+    LIMIT_STARTER_CONVERSATIONS,
+)
 
-# Starter users: lifetime cap on conversations created (deleting does not free slots).
-STARTER_CONVERSATION_LIMIT = 5
-
-# Pro users: max number of collections they can own at once (current total).
-PRO_COLLECTION_LIMIT = 50
-
-# Starter users: lifetime cap on collections created (deleting does not free slots).
-STARTER_COLLECTION_LIMIT = 5
+# Re-export for consumers; all limit-checking code paths use these.
+PRO_CONVERSATION_LIMIT = LIMIT_PRO_CONVERSATIONS
+STARTER_CONVERSATION_LIMIT = LIMIT_STARTER_CONVERSATIONS
+PRO_COLLECTION_LIMIT = LIMIT_PRO_COLLECTIONS
+STARTER_COLLECTION_LIMIT = LIMIT_STARTER_COLLECTIONS
