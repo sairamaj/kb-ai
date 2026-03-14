@@ -1,6 +1,7 @@
 /**
- * In-app help chatbot UI (CB-06, CB-07).
+ * In-app help chatbot UI (CB-06, CB-07, CB-08).
  * Distinct from the main knowledge-base chat: this is application help only.
+ * Multi-turn: prior turns are sent as history so follow-ups (e.g. "How do I open it?") are answered in context.
  */
 import { useRef, useState } from 'react'
 import { MessageBubble } from './MessageBubble'
@@ -42,11 +43,13 @@ export function HelpPage({ onBack }: Props) {
     if (bottomRef.current) bottomRef.current.scrollIntoView({ behavior: 'smooth' })
 
     try {
+      // CB-08: Send prior turns so the backend can answer in context (multi-turn).
+      const history = messages.map((m) => ({ role: m.role, content: m.content }))
       const res = await fetch('/api/help/chat', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, history }),
       })
       if (!res.ok) {
         const errText = await res.text().catch(() => res.statusText)
@@ -135,6 +138,7 @@ export function HelpPage({ onBack }: Props) {
         <ChatInput
           onSend={handleSend}
           disabled={isLoading}
+          placeholder="Ask about the app… (Enter to send, Shift+Enter for new line)"
         />
       </div>
     </div>

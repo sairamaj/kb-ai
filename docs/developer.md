@@ -129,6 +129,7 @@ Users can open the help chatbot from anywhere in the main app:
 
 - **Help button:** Click **Help** in the header (Chat, Library, or Conversation detail). The button is styled in amber to distinguish it from the main chat.
 - **Route:** Navigating to `/help` opens the help page directly. The help UI is labeled **App help** and is visually distinct from the main knowledge-base chat (amber accent, question-mark icon, and copy that states it is for application questions only).
+- **Chat UI (CB-07):** The help page provides a chat-style interface: message list (user and assistant bubbles), text input, and send. Only the help-chat endpoint is called; no main conversation or conversation endpoints are used.
 
 #### Help-chat API (CB-02)
 
@@ -138,10 +139,11 @@ The help chatbot is exposed via a dedicated endpoint so the frontend can send qu
 - **Authentication:** Optional. If the request includes a valid auth cookie, the user is recognized for future personalization (Phase 2). Unauthenticated requests receive only generic/product-level answers.
 - **Request body (JSON):**
   - **message** (string, required) — The user’s question.
-  - **session_id** (string, optional) — Reserved for multi-turn help sessions (CB-08); currently unused.
+  - **history** (array, optional) — **CB-08 multi-turn:** Prior turns in this help session. Each element is `{ "role": "user" | "assistant", "content": string }`. The backend uses this as conversation context so follow-ups (e.g. “How do I open it?” after “What is replay mode?”) are answered in context. Stateless: no server-side session; the frontend sends the full history each time. Capped to the last 20 messages (10 turns) to avoid token overflow.
+  - **session_id** (string, optional) — Unused; history is passed in the request body.
 - **Response (JSON):**
   - **answer** (string) — The help bot’s reply, grounded in the help knowledge source.
-- **Behaviour:** The endpoint does not create or update conversations, collections, or user records; it is read-only for help purposes.
+- **Behaviour:** The endpoint does not create or update conversations, collections, or user records; it is read-only for help purposes. It does not receive or use the user’s main-app conversation history—only the help-session history sent in the request.
 
 #### Grounding help answers (CB-03)
 

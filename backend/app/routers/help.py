@@ -106,11 +106,19 @@ OUT_OF_SCOPE_REDIRECT = (
 )
 
 
+class HelpChatMessage(BaseModel):
+    """One turn in the help conversation (CB-08). Only user and assistant; no system."""
+
+    role: str  # "user" | "assistant"
+    content: str
+
+
 class HelpChatRequest(BaseModel):
     """Request body for the help-chat endpoint."""
 
     message: str
-    session_id: str | None = None  # Optional; reserved for multi-turn (CB-08)
+    session_id: str | None = None  # Optional; unused (history is in request body).
+    history: list[HelpChatMessage] | None = None  # CB-08: prior turns in this help session (user/assistant only).
 
 
 class HelpChatResponse(BaseModel):
@@ -214,7 +222,9 @@ async def help_chat(
     """
     Answer a user question using the help knowledge source.
 
-    - Accepts a message (and optional session_id for future multi-turn).
+    - Accepts a message and optional history (CB-08 multi-turn). History is a list of
+      prior { role, content } turns (user/assistant only) in this help session; the
+      backend uses it as conversation context. No server-side session; stateless.
     - Does not create or update conversations, collections, or user records.
     - Authenticated requests are accepted; unauthenticated requests receive
       only generic/product-level answers (no user-specific data).
@@ -223,8 +233,10 @@ async def help_chat(
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
 
-    # CB-04: If the question is not about the app, return a fixed polite redirect (no LLM-generated redirect).
-    if not await _is_question_about_app(message):
+    # CB-04: If the question is not about the app, return a fixed polite redirect.
+    # CB-08: When history is present, skip this check so follow-ups (e.g. "How do I open it?") are answered in context.
+    has_history = bool(request.history and len(request.history) > 0)
+    if not has_history and not await _is_question_about_app(message):
         return HelpChatResponse(answer=OUT_OF_SCOPE_REDIRECT)
 
     # CB-05: For authenticated users, load role and usage so the bot can personalize answers.
@@ -235,11 +247,21 @@ async def help_chat(
     client = get_openai_client()
     system_prompt = _build_system_prompt(help_context)
 
+    # CB-08: Build conversation messages. Include prior turns (capped) then the new user message.
+    # Only user and assistant from this help session; no main-app conversation data.
+    max_history_messages = 20  # Last 10 turns to avoid token overflow
+    chat_messages: list[dict[str, str]] = []
+    if request.history:
+        for m in request.history[-max_history_messages:]:
+            if m.role in ("user", "assistant") and m.content.strip():
+                chat_messages.append({"role": m.role, "content": m.content.strip()})
+    chat_messages.append({"role": "user", "content": message})
+
     completion = await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": message},
+            *chat_messages,
         ],
         stream=False,
     )

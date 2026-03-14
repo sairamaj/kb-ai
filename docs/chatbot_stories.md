@@ -152,6 +152,8 @@ This document defines a phased set of implementation stories for the in-app help
 - Given the help API returns a stream, the UI shows the response as it streams (or as a single block if the implementation uses a non-streaming response).
 - Given a check of network requests, the help UI only calls the help-chat endpoint, not the main chat/conversation endpoint.
 
+**Implementation (CB-07):** The help page (`frontend/src/components/HelpPage.tsx`) provides a chat-style UI: message list (user and assistant) using `MessageBubble`, `ChatInput` with a help-specific placeholder, and send. It calls only `POST /api/help/chat`; responses are shown as a single block (backend is non-streaming). A typing indicator is shown while the request is in flight.
+
 ---
 
 ### CB-08 — Optional: Support multi-turn help conversations
@@ -171,6 +173,8 @@ This document defines a phased set of implementation stories for the in-app help
 - Given a user who has asked “What is replay mode?” and received an answer, when they ask “How do I open it?” in the same help session, the response is appropriate in context (e.g. explains how to open replay for a conversation).
 - Given the help session, the backend does not receive or use messages from the user’s main chat conversations.
 - Given documentation, it is clear whether the help bot supports single-turn only or multi-turn, and how to pass session/history if applicable.
+
+**Implementation (CB-08):** Multi-turn is supported. The frontend sends **history** (array of `{ role, content }` for prior user/assistant turns in the help session) with each request; the backend uses it as conversation context. Stateless (no server-side session). History is capped to the last 20 messages. See `docs/developer.md` (Help-chat API § history).
 
 ---
 
