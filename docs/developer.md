@@ -10,7 +10,21 @@
 
 Unauthenticated requests receive 401; no role is returned.
 
-#### Changing a user's role
+#### Admin-only endpoints (AUTHZ-05)
+
+Admin-only operations use a shared dependency so behaviour is consistent. In the backend, inject `CurrentAdmin` from `app.auth`; it enforces the current user has role `administrator` and returns the full User—non-admins get HTTP 403.
+
+```python
+from app.auth import CurrentAdmin
+
+@router.patch("/admin-only-action")
+async def admin_only_action(_admin: CurrentAdmin, ...) -> ...:
+    ...
+```
+
+Role management (e.g. `PATCH /users/{user_id}/role`) is already protected this way.
+
+#### Changing a user's role (CLI)
 
 From the **backend** directory, run:
 
