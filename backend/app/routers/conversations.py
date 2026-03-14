@@ -12,7 +12,8 @@ from sqlalchemy.orm import selectinload
 from app.auth import CurrentUser
 from app.database import get_db
 from app.export_utils import conversation_to_markdown, sanitize_filename
-from app.models import Collection, Conversation, ConversationCollection, Message, MessageRole, Visibility
+from app.limits import PRO_CONVERSATION_LIMIT, STARTER_CONVERSATION_LIMIT
+from app.models import Collection, Conversation, ConversationCollection, Message, MessageRole, User, UserRole, Visibility
 from app.openai_client import embed_text, has_openai_key
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -171,6 +172,35 @@ async def save_conversation(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> ConversationResponse:
+    # AUTHZ-06 / AUTHZ-07 / AUTHZ-08: Enforce conversation limits by role.
+    owner_uuid = uuid.UUID(current_user.sub)
+    user_result = await db.execute(select(User).where(User.id == owner_uuid))
+    user = user_result.scalar_one_or_none()
+    if user and user.role != UserRole.administrator:
+        # AUTHZ-08: Explicit bypass — administrators are never subject to conversation limits.
+        if user.role == UserRole.pro:
+            count_result = await db.execute(
+                select(func.count(Conversation.id)).where(Conversation.owner_id == owner_uuid)
+            )
+            current_count = count_result.scalar() or 0
+            if current_count >= PRO_CONVERSATION_LIMIT:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Conversation limit reached for your plan. You can have up to {PRO_CONVERSATION_LIMIT} conversations. "
+                        "Delete an existing conversation to create a new one."
+                    ),
+                )
+        elif user.role == UserRole.starter:
+            if user.lifetime_conversations_created >= STARTER_CONVERSATION_LIMIT:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Conversation limit reached for your plan. Starter accounts can create up to {STARTER_CONVERSATION_LIMIT} conversations. "
+                        "Upgrade to Pro for more conversations."
+                    ),
+                )
+
     # Auto-generate title from first user message if blank.
     title = body.title.strip()
     if not title:
@@ -214,6 +244,10 @@ async def save_conversation(
     embedding = await embed_text(text_to_embed)
     if embedding is not None:
         conversation.embedding = embedding
+
+    # AUTHZ-07: Increment lifetime count for Starter users (never decremented on delete).
+    if user and user.role == UserRole.starter:
+        user.lifetime_conversations_created = (user.lifetime_conversations_created or 0) + 1
 
     await db.commit()
     await db.refresh(conversation)

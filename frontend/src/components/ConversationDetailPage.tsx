@@ -574,7 +574,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
                   >
                     <option value="">Add to collection…</option>
                     {collections
-                      .filter((c) => !(conv.collection_ids ?? []).includes(c.id))
+                      .filter((c) => c.is_owner !== false && !(conv.collection_ids ?? []).includes(c.id))
                       .map((c) => (
                         <option key={c.id} value={c.id}>{c.name}</option>
                       ))}

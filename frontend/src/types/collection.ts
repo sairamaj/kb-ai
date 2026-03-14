@@ -3,6 +3,10 @@ export interface CollectionSummary {
   name: string
   visibility: 'public' | 'private'
   created_at: string
+  /** True when the current user owns this collection; false for public collections from others. */
+  is_owner?: boolean
+  author_name?: string | null
+  author_avatar?: string | null
 }
 
 export interface CreateCollectionPayload {

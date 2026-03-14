@@ -33,6 +33,9 @@ class CollectionResponse(BaseModel):
     name: str
     visibility: str
     created_at: str
+    is_owner: bool = True
+    author_name: str | None = None
+    author_avatar: str | None = None
 
 
 class AddToCollectionRequest(BaseModel):
@@ -83,23 +86,51 @@ async def list_collections(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> list[CollectionResponse]:
-    """List all collections owned by the authenticated user."""
+    """List collections for the authenticated user: their own plus public collections from others."""
     owner_uuid = uuid.UUID(current_user.sub)
+
+    # Own collections first, most recent first
     result = await db.execute(
         select(Collection)
         .where(Collection.owner_id == owner_uuid)
         .order_by(Collection.created_at.desc())
     )
-    collections = result.scalars().all()
-    return [
+    own = result.scalars().all()
+    out = [
         CollectionResponse(
             id=str(c.id),
             name=c.name,
             visibility=c.visibility,
             created_at=c.created_at.isoformat(),
+            is_owner=True,
         )
-        for c in collections
+        for c in own
     ]
+
+    # Public collections from other users (for discovery in library)
+    other_result = await db.execute(
+        select(Collection)
+        .where(
+            Collection.owner_id != owner_uuid,
+            Collection.visibility == Visibility.public,
+        )
+        .options(selectinload(Collection.owner))
+        .order_by(Collection.created_at.desc())
+    )
+    other_public = other_result.unique().scalars().all()
+    for c in other_public:
+        out.append(
+            CollectionResponse(
+                id=str(c.id),
+                name=c.name,
+                visibility=c.visibility,
+                created_at=c.created_at.isoformat(),
+                is_owner=False,
+                author_name=c.owner.display_name,
+                author_avatar=c.owner.avatar_url,
+            )
+        )
+    return out
 
 
 @router.post("", response_model=CollectionResponse, status_code=201)
@@ -135,6 +166,7 @@ async def create_collection(
         name=collection.name,
         visibility=collection.visibility,
         created_at=collection.created_at.isoformat(),
+        is_owner=True,
     )
 
 
@@ -219,6 +251,7 @@ async def get_collection(
         name=c.name,
         visibility=c.visibility,
         created_at=c.created_at.isoformat(),
+        is_owner=True,
     )
 
 
@@ -330,6 +363,7 @@ async def update_collection(
         name=c.name,
         visibility=c.visibility,
         created_at=c.created_at.isoformat(),
+        is_owner=True,
     )
 
 

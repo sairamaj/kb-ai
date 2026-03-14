@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -64,6 +65,8 @@ class User(Base):
         nullable=False,
         default=UserRole.starter,
     )
+    # AUTHZ-07: Lifetime count of conversations created (Starter cap); never decremented on delete.
+    lifetime_conversations_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     conversations: Mapped[list["Conversation"]] = relationship("Conversation", back_populates="owner", cascade="all, delete-orphan")

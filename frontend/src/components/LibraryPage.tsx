@@ -496,7 +496,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                   className="text-xs bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg px-2.5 py-1 text-gray-700 dark:text-gray-300 focus:outline-none focus:border-indigo-500"
                 >
                   <option value="">All collections</option>
-                  {collections.map((col) => (
+                  {collections.filter((c) => c.is_owner !== false).map((col) => (
                     <option key={col.id} value={col.id}>
                       {col.name}
                     </option>
@@ -739,7 +739,7 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                       >
                         <option value="">Add to collection…</option>
                         {collections
-                          .filter((c) => !(conv.collection_ids ?? []).includes(c.id))
+                          .filter((c) => c.is_owner !== false && !(conv.collection_ids ?? []).includes(c.id))
                           .map((c) => (
                             <option key={c.id} value={c.id}>
                               {c.name}
@@ -831,7 +831,9 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
               <p className="text-xs text-gray-400 dark:text-gray-600 mb-2">
                 {collections.length} collection{collections.length !== 1 ? 's' : ''}
               </p>
-              {collections.map((col) => (
+              {collections.map((col) => {
+                const isOwned = col.is_owner !== false
+                return (
                 <div
                   key={col.id}
                   className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3.5 flex items-center justify-between gap-3"
@@ -839,76 +841,112 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{col.name}</p>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void updateCollectionVisibility(col.id, col.visibility === 'public' ? 'private' : 'public')
-                        }
-                        disabled={collectionVisibilityUpdating === col.id}
-                        className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
-                          col.visibility === 'public'
-                            ? 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60'
-                            : 'bg-gray-100 dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-400'
-                        } disabled:opacity-50`}
-                        title={col.visibility === 'public' ? 'Click to make private' : 'Click to make public'}
-                      >
-                        {collectionVisibilityUpdating === col.id ? '…' : col.visibility}
-                      </button>
+                      {isOwned && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void updateCollectionVisibility(col.id, col.visibility === 'public' ? 'private' : 'public')
+                          }
+                          disabled={collectionVisibilityUpdating === col.id}
+                          className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
+                            col.visibility === 'public'
+                              ? 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60'
+                              : 'bg-gray-100 dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-400'
+                          } disabled:opacity-50`}
+                          title={col.visibility === 'public' ? 'Click to make private' : 'Click to make public'}
+                        >
+                          {collectionVisibilityUpdating === col.id ? '…' : col.visibility}
+                        </button>
+                      )}
+                      {!isOwned && col.author_name && (
+                        <span className="text-xs text-gray-500 dark:text-gray-400">by {col.author_name}</span>
+                      )}
                       <span className="text-xs text-gray-400 dark:text-gray-600">
                         Created {formatDate(col.created_at)}
                       </span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => void exportCollection(col.id, 'md', col.name)}
-                      disabled={exportingCollectionId === col.id}
-                      className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                      title="Export collection as single Markdown file"
-                    >
-                      {exportingCollectionId === col.id ? (
-                        <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                      ) : (
-                        <>
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                          </svg>
-                          MD
-                        </>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void exportCollection(col.id, 'zip', col.name)}
-                      disabled={exportingCollectionId === col.id}
-                      className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                      title="Export collection as ZIP of Markdown files"
-                    >
-                      ZIP
-                    </button>
-                    {col.visibility === 'public' && (
-                      <button
-                        type="button"
-                        onClick={() => copyCollectionLink(col.id)}
-                        className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5"
-                        title="Copy shareable link"
-                      >
-                        {copiedCollectionId === col.id ? (
-                          <span className="text-green-600 dark:text-green-400">Copied!</span>
-                        ) : (
-                          <>
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                            Copy link
-                          </>
+                    {isOwned ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void exportCollection(col.id, 'md', col.name)}
+                          disabled={exportingCollectionId === col.id}
+                          className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                          title="Export collection as single Markdown file"
+                        >
+                          {exportingCollectionId === col.id ? (
+                            <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                          ) : (
+                            <>
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                              </svg>
+                              MD
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void exportCollection(col.id, 'zip', col.name)}
+                          disabled={exportingCollectionId === col.id}
+                          className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                          title="Export collection as ZIP of Markdown files"
+                        >
+                          ZIP
+                        </button>
+                        {col.visibility === 'public' && (
+                          <button
+                            type="button"
+                            onClick={() => copyCollectionLink(col.id)}
+                            className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5"
+                            title="Copy shareable link"
+                          >
+                            {copiedCollectionId === col.id ? (
+                              <span className="text-green-600 dark:text-green-400">Copied!</span>
+                            ) : (
+                              <>
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                                Copy link
+                              </>
+                            )}
+                          </button>
                         )}
-                      </button>
+                      </>
+                    ) : (
+                      <>
+                        <a
+                          href={`/collections/public/${col.id}`}
+                          className="text-xs px-2 py-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-900/40 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/60 transition-colors"
+                        >
+                          View
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => copyCollectionLink(col.id)}
+                          className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5"
+                          title="Copy shareable link"
+                        >
+                          {copiedCollectionId === col.id ? (
+                            <span className="text-green-600 dark:text-green-400">Copied!</span>
+                          ) : (
+                            <>
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                              </svg>
+                              Copy link
+                            </>
+                          )}
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
