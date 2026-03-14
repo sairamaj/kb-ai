@@ -131,6 +131,8 @@ This document defines a phased set of implementation stories for the in-app help
 
 ---
 
+**Implementation (CB-06):** Entry point: **Help** button in the header on Chat, Library, and Conversation detail pages; route `/help`. Help page is labeled **App help** with amber styling and a question-mark icon. See `docs/developer.md` (§ In-app help entry point).
+
 ### CB-07 — Provide a chat-style UI for the help chatbot
 
 **Goal:** Users interact with the help bot through a familiar chat interface: message list, input field, and send action.

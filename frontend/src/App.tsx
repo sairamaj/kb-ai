@@ -8,6 +8,7 @@ import { LibraryPage } from './components/LibraryPage'
 import { PublicConversationPage } from './components/PublicConversationPage'
 import { PublicCollectionPage } from './components/PublicCollectionPage'
 import { FeedPage } from './components/FeedPage'
+import { HelpPage } from './components/HelpPage'
 import type { Message } from './types/chat'
 
 type AppPage =
@@ -17,6 +18,7 @@ type AppPage =
   | { name: 'public-conversation'; id: string }
   | { name: 'public-collection'; id: string }
   | { name: 'feed' }
+  | { name: 'help' }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -30,6 +32,7 @@ function parsePath(pathname: string): AppPage {
     return { name: 'public-collection', id: publicColMatch[1] }
   }
   if (pathname === '/feed') return { name: 'feed' }
+  if (pathname === '/help') return { name: 'help' }
   return { name: 'chat' }
 }
 
@@ -37,6 +40,7 @@ function pageToPath(page: AppPage): string {
   if (page.name === 'public-conversation') return `/c/${page.id}`
   if (page.name === 'public-collection') return `/collections/public/${page.id}`
   if (page.name === 'feed') return '/feed'
+  if (page.name === 'help') return '/help'
   return '/'
 }
 
@@ -107,10 +111,17 @@ function AppShell() {
 
   if (!user) return <LoginPage onGoToFeed={() => setPage({ name: 'feed' })} />
 
+  if (page.name === 'help') {
+    return (
+      <HelpPage onBack={() => setPage({ name: 'chat' })} />
+    )
+  }
+
   if (page.name === 'library') {
     return (
       <LibraryPage
         onBack={() => setPage({ name: 'chat' })}
+        onOpenHelp={() => setPage({ name: 'help' })}
         onOpenConversation={(id) => setPage({ name: 'conversation', id, from: 'library' })}
       />
     )
@@ -122,6 +133,7 @@ function AppShell() {
       <ConversationDetailPage
         id={page.id}
         onBack={() => setPage(backPage)}
+        onOpenHelp={() => setPage({ name: 'help' })}
         onDeleted={() => setPage(backPage)}
         onContinue={(messages, title) =>
           setPage({ name: 'chat', initialMessages: messages, continuedFromTitle: title })
@@ -136,6 +148,7 @@ function AppShell() {
     <ChatPage
       onOpenConversation={(id: string) => setPage({ name: 'conversation', id, from: 'chat' })}
       onOpenLibrary={() => setPage({ name: 'library' })}
+      onOpenHelp={() => setPage({ name: 'help' })}
       initialMessages={chatPage.initialMessages}
       continuedFromTitle={chatPage.continuedFromTitle}
     />

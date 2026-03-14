@@ -92,11 +92,12 @@ const TEMPLATES = [
 interface Props {
   onOpenConversation: (id: string) => void
   onOpenLibrary: () => void
+  onOpenHelp: () => void
   initialMessages?: Message[]
   continuedFromTitle?: string
 }
 
-export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, continuedFromTitle }: Props) {
+export function ChatPage({ onOpenConversation, onOpenLibrary, onOpenHelp, initialMessages, continuedFromTitle }: Props) {
   const queryClient = useQueryClient()
   const { messages, addMessage, appendToLastAssistant, clearMessages, clearDraft, hasDraft } = useChat(initialMessages)
   const { user, logout } = useAuth()
@@ -307,6 +308,13 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
             className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             Library
+          </button>
+          <button
+            onClick={onOpenHelp}
+            className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors px-2 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900/30 border border-amber-200 dark:border-amber-800"
+            title="Open application help"
+          >
+            Help
           </button>
           <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-800 pl-3 ml-1">
             {user?.usage && (

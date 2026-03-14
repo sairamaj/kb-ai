@@ -123,6 +123,13 @@ The in-app help chatbot uses a single, curated knowledge source so answers stay 
 - **Loading at runtime:** Use `from app.help_knowledge import get_help_knowledge` to get the full text; the help-chat API uses this to ground responses.
 - **Updating:** When any of the source docs change, update `content.md` accordingly and restart the backend (or clear the in-memory cache). See `backend/app/help_knowledge/README.md` for the update process.
 
+#### In-app help entry point (CB-06)
+
+Users can open the help chatbot from anywhere in the main app:
+
+- **Help button:** Click **Help** in the header (Chat, Library, or Conversation detail). The button is styled in amber to distinguish it from the main chat.
+- **Route:** Navigating to `/help` opens the help page directly. The help UI is labeled **App help** and is visually distinct from the main knowledge-base chat (amber accent, question-mark icon, and copy that states it is for application questions only).
+
 #### Help-chat API (CB-02)
 
 The help chatbot is exposed via a dedicated endpoint so the frontend can send questions without using the main conversation chat.

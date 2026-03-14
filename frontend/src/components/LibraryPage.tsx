@@ -37,10 +37,11 @@ function useDebounce<T>(value: T, delay: number): T {
 
 interface Props {
   onBack: () => void
+  onOpenHelp: () => void
   onOpenConversation: (id: string) => void
 }
 
-export function LibraryPage({ onBack, onOpenConversation }: Props) {
+export function LibraryPage({ onBack, onOpenHelp, onOpenConversation }: Props) {
   const queryClient = useQueryClient()
   const { user, logout, deleteAccount } = useAuth()
 
@@ -360,6 +361,13 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-800 pl-3">
+          <button
+            onClick={onOpenHelp}
+            className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors px-2 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900/30 border border-amber-200 dark:border-amber-800"
+            title="Open application help"
+          >
+            Help
+          </button>
           <ThemeToggle />
           {user?.usage && (
             <UsageDisplay usage={user.usage} className="hidden sm:inline" />
