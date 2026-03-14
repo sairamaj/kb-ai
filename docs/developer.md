@@ -135,3 +135,12 @@ The help chatbot is exposed via a dedicated endpoint so the frontend can send qu
 - **Response (JSON):**
   - **answer** (string) — The help bot’s reply, grounded in the help knowledge source.
 - **Behaviour:** The endpoint does not create or update conversations, collections, or user records; it is read-only for help purposes.
+
+#### Grounding help answers (CB-03)
+
+Every help response is grounded in the help knowledge source so the bot does not invent features, limits, or procedures.
+
+- **Knowledge source:** The full content of `content.md` is injected into the system prompt as the single source of truth. The model is instructed to base answers only on this content.
+- **Role names and limits:** Answers use the exact role names (Administrator, Pro, Starter) and correct limit semantics: Starter = lifetime creation caps; Pro = current total; Administrator = unlimited.
+- **Limit values:** The backend injects the current configured limits from `backend/app/config.py` (e.g. `LIMIT_PRO_CONVERSATIONS`, `LIMIT_STARTER_CONVERSATIONS`) into the prompt so answers cite accurate numbers. The model is instructed to note that limits are configurable per deployment.
+- **Out-of-scope:** Questions not about the application are handled by a polite redirect (see CB-04); the bot does not attempt to answer them from general knowledge.
