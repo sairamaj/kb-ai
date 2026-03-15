@@ -38,9 +38,11 @@ function useDebounce<T>(value: T, delay: number): T {
 interface Props {
   onBack: () => void
   onOpenConversation: (id: string) => void
+  /** REP-02: Only set for administrators; shows Reports nav link. */
+  onOpenReports?: () => void
 }
 
-export function LibraryPage({ onBack, onOpenConversation }: Props) {
+export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props) {
   const queryClient = useQueryClient()
   const { user, logout, deleteAccount } = useAuth()
 
@@ -360,6 +362,14 @@ export function LibraryPage({ onBack, onOpenConversation }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-800 pl-3">
+          {onOpenReports && (
+            <button
+              onClick={onOpenReports}
+              className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              Reports
+            </button>
+          )}
           <ThemeToggle />
           {user?.usage && (
             <UsageDisplay usage={user.usage} className="hidden sm:inline" />

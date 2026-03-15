@@ -15,6 +15,8 @@ interface Props {
   onBack: () => void
   onDeleted?: () => void
   onContinue?: (messages: Message[], title: string) => void
+  /** REP-02: Only set for administrators; shows Reports nav link. */
+  onOpenReports?: () => void
 }
 
 function formatDate(iso: string): string {
@@ -34,7 +36,7 @@ function toUiMessage(m: { id: string; role: string; content: string }): Message 
   }
 }
 
-export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Props) {
+export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOpenReports }: Props) {
   const queryClient = useQueryClient()
   const { user, logout } = useAuth()
 
@@ -417,6 +419,14 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue }: Pr
             </svg>
             Replay
           </button>
+          {onOpenReports && (
+            <button
+              onClick={onOpenReports}
+              className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              Reports
+            </button>
+          )}
           <ThemeToggle />
           {user?.usage && (
             <UsageDisplay usage={user.usage} className="hidden sm:inline" />
