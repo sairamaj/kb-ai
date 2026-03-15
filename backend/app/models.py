@@ -70,6 +70,10 @@ class User(Base):
     # AUTHZ-10: Lifetime count of collections created (Starter cap); never decremented on delete.
     lifetime_collections_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # REP-04: Last time the user performed an authenticated action (e.g. /auth/me).
+    last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # REP-05: Number of visits (incremented on each OAuth login).
+    visit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     conversations: Mapped[list["Conversation"]] = relationship("Conversation", back_populates="owner", cascade="all, delete-orphan")
     collections: Mapped[list["Collection"]] = relationship("Collection", back_populates="owner", cascade="all, delete-orphan")

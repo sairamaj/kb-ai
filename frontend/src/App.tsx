@@ -9,6 +9,7 @@ import { PublicConversationPage } from './components/PublicConversationPage'
 import { PublicCollectionPage } from './components/PublicCollectionPage'
 import { FeedPage } from './components/FeedPage'
 import { HelpPopup } from './components/HelpPopup'
+import { ReportsPage } from './components/ReportsPage'
 import type { Message } from './types/chat'
 
 type AppPage =
@@ -18,6 +19,7 @@ type AppPage =
   | { name: 'public-conversation'; id: string }
   | { name: 'public-collection'; id: string }
   | { name: 'feed' }
+  | { name: 'reports' }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -31,6 +33,7 @@ function parsePath(pathname: string): AppPage {
     return { name: 'public-collection', id: publicColMatch[1] }
   }
   if (pathname === '/feed') return { name: 'feed' }
+  if (pathname === '/reports') return { name: 'reports' }
   if (pathname === '/help') return { name: 'chat' }
   return { name: 'chat' }
 }
@@ -39,6 +42,7 @@ function pageToPath(page: AppPage): string {
   if (page.name === 'public-conversation') return `/c/${page.id}`
   if (page.name === 'public-collection') return `/collections/public/${page.id}`
   if (page.name === 'feed') return '/feed'
+  if (page.name === 'reports') return '/reports'
   return '/'
 }
 
@@ -69,6 +73,15 @@ function AppShell() {
     window.addEventListener('popstate', handlePop)
     return () => window.removeEventListener('popstate', handlePop)
   }, [])
+
+  // REP-02: Redirect non-admins who hit /reports directly (API would return 403).
+  useEffect(() => {
+    if (!user || isLoading) return
+    if (page.name === 'reports' && user.role !== 'administrator') {
+      setPage({ name: 'chat' })
+      window.history.replaceState({}, '', '/')
+    }
+  }, [user, isLoading, page.name])
 
   // ---------------------------------------------------------------------------
   // Public pages — no authentication required
@@ -118,12 +131,23 @@ function AppShell() {
 
   if (!user) return <LoginPage onGoToFeed={() => setPage({ name: 'feed' })} />
 
+  if (page.name === 'reports' && user.role === 'administrator') {
+    return (
+      <ReportsPage onBack={() => setPage({ name: 'chat' })} />
+    )
+  }
+
+  if (page.name === 'reports') {
+    return null
+  }
+
   if (page.name === 'library') {
     return (
       <>
         <LibraryPage
           onBack={() => setPage({ name: 'chat' })}
           onOpenConversation={(id) => setPage({ name: 'conversation', id, from: 'library' })}
+          onOpenReports={user.role === 'administrator' ? () => setPage({ name: 'reports' }) : undefined}
         />
         <HelpPopup open={helpPopupOpen} onOpen={() => setHelpPopupOpen(true)} onClose={() => setHelpPopupOpen(false)} />
       </>
@@ -141,6 +165,7 @@ function AppShell() {
           onContinue={(messages, title) =>
             setPage({ name: 'chat', initialMessages: messages, continuedFromTitle: title })
           }
+          onOpenReports={user.role === 'administrator' ? () => setPage({ name: 'reports' }) : undefined}
         />
         <HelpPopup open={helpPopupOpen} onOpen={() => setHelpPopupOpen(true)} onClose={() => setHelpPopupOpen(false)} />
       </>
@@ -154,6 +179,7 @@ function AppShell() {
       <ChatPage
         onOpenConversation={(id: string) => setPage({ name: 'conversation', id, from: 'chat' })}
         onOpenLibrary={() => setPage({ name: 'library' })}
+        onOpenReports={user.role === 'administrator' ? () => setPage({ name: 'reports' }) : undefined}
         initialMessages={chatPage.initialMessages}
         continuedFromTitle={chatPage.continuedFromTitle}
       />

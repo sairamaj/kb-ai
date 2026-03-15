@@ -92,11 +92,13 @@ const TEMPLATES = [
 interface Props {
   onOpenConversation: (id: string) => void
   onOpenLibrary: () => void
+  /** REP-02: Only set for administrators; shows Reports nav link. */
+  onOpenReports?: () => void
   initialMessages?: Message[]
   continuedFromTitle?: string
 }
 
-export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, continuedFromTitle }: Props) {
+export function ChatPage({ onOpenConversation, onOpenLibrary, onOpenReports, initialMessages, continuedFromTitle }: Props) {
   const queryClient = useQueryClient()
   const { messages, addMessage, appendToLastAssistant, clearMessages, clearDraft, hasDraft } = useChat(initialMessages)
   const { user, logout } = useAuth()
@@ -308,6 +310,14 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, initialMessages, c
           >
             Library
           </button>
+          {onOpenReports && (
+            <button
+              onClick={onOpenReports}
+              className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              Reports
+            </button>
+          )}
           <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-800 pl-3 ml-1">
             {user?.usage && (
               <UsageDisplay usage={user.usage} className="hidden sm:inline" />
