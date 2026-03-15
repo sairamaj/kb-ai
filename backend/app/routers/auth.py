@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -207,11 +208,13 @@ async def oauth_callback(
                 display_name=display_name,
                 avatar_url=avatar_url,
                 role=UserRole.starter,
+                visit_count=1,  # REP-05: first login = first visit
             )
             db.add(user)
         else:
             user.display_name = display_name
             user.avatar_url = avatar_url
+            user.visit_count += 1  # REP-05: increment on each login
         await db.commit()
         await db.refresh(user)
 
@@ -249,6 +252,10 @@ async def get_me(
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found; please log in again")
+    # REP-04: update last accessed time on each /auth/me call
+    user.last_accessed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(user)
     owner_uuid = user.id
 
     # AUTHZ-12: Usage for UI (conversations and collections used vs limit).

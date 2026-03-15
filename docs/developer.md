@@ -36,6 +36,10 @@ Conversation and collection limits for **Pro** and **Starter** roles are defined
   - `LIMIT_STARTER_COLLECTIONS` — lifetime cap on collections for Starter (default: 5)
 - **How to adjust:** Set the variables in `backend/.env` or your deployment environment and restart the backend. Invalid or negative values fall back to the default. All limit checks (conversation creation, collection creation, and `/auth/me` usage) use these values.
 
+#### Model costs (admin reports, REP-07)
+
+The model and costs report (`GET /api/admin/reports/models`) shows each model in use and its configured unit cost (USD per 1K tokens). Cost values are **defined in** `backend/app/config.py`: `KNOWN_MODELS` lists model ids used by chat/help; `_DEFAULT_MODEL_COSTS` holds default cost per 1K tokens. **To update:** edit the defaults in `config.py`, or override per model via environment variables (e.g. `MODEL_COST_GPT_4O_MINI=0.0002`). Env keys are the model id in uppercase with dots/dashes replaced by underscores, prefixed with `MODEL_COST_`. Restart the backend after changing config or env.
+
 #### Changing a user's role (CLI)
 
 From the **backend** directory, run:
