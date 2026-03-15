@@ -16,6 +16,7 @@ from app.auth import CurrentAdmin
 from app import config as app_config
 from app.database import get_db
 from app.models import Collection, Conversation, User
+from app.provider_costs import fetch_openai_costs, openai_cost_for_model
 
 router = APIRouter(prefix="/admin/reports", tags=["reports"])
 
@@ -42,10 +43,12 @@ class UserReportRow(BaseModel):
 # ---------------------------------------------------------------------------
 
 class ModelReportRow(BaseModel):
-    """One row in the model report: model id and configured unit cost (USD per 1K tokens)."""
+    """One row in the model report: model id, configured unit cost, and optional real spend from provider."""
 
     model: str
-    cost_per_1k_tokens: float | None  # configured cost, or null if not set
+    cost_per_1k_tokens: float | None  # configured cost (USD per 1K tokens), or null if not set
+    real_cost_usd: float | None  # actual spend from provider (e.g. OpenAI) for the period, or null
+    cost_period_label: str | None  # e.g. "Last 30 days" when real_cost_usd is present
 
 
 @router.get("/models", response_model=list[ModelReportRow])
@@ -57,22 +60,31 @@ async def get_models_report(
     Admin-only model and costs report (REP-06, REP-07).
 
     Returns one row per model in use: distinct Conversation.model plus models
-    used by chat and help (from config KNOWN_MODELS). Each row includes
-    model identifier and current configured cost per 1K tokens (USD), or null
-    if not configured. Cost values are defined in app.config and can be
-    overridden via env (e.g. MODEL_COST_GPT_4O_MINI).
+    from config KNOWN_MODELS. Each row includes:
+    - model id, configured cost per 1K tokens (USD),
+    - real_cost_usd when available (OpenAI: from organization costs API; Gemini: not available),
+    - cost_period_label (e.g. "Last 30 days") when real spend is shown.
     """
     stmt = select(Conversation.model).distinct()
     result = await db.execute(stmt)
     db_models = {row[0] for row in result.all()}
     all_models = sorted(db_models | set(app_config.KNOWN_MODELS))
-    rows = [
-        ModelReportRow(
-            model=mid,
-            cost_per_1k_tokens=app_config.get_model_cost_per_1k_tokens(mid),
+
+    # Fetch real costs from OpenAI when configured (same key as chat; may need org cost permission).
+    openai_costs = await fetch_openai_costs()
+    period_label = "Last 30 days" if openai_costs else None
+
+    rows = []
+    for mid in all_models:
+        real_usd = openai_cost_for_model(mid, openai_costs)
+        rows.append(
+            ModelReportRow(
+                model=mid,
+                cost_per_1k_tokens=app_config.get_model_cost_per_1k_tokens(mid),
+                real_cost_usd=real_usd,
+                cost_period_label=period_label if real_usd is not None else None,
+            )
         )
-        for mid in all_models
-    ]
     return rows
 
 

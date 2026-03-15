@@ -1,11 +1,11 @@
 /**
- * Admin-only Reports page (REP-02, REP-08).
+ * Admin-only Reports page (REP-02, REP-08, REP-09).
  * Visible only to administrators; non-admins are redirected or get 403 from API.
- * User report table: identifier, role, last accessed, visits, collections, conversations.
+ * User report table and model/costs report table; read-only.
  */
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
-import type { UserReportRow } from '../types/reports'
+import type { UserReportRow, ModelReportRow } from '../types/reports'
 import { USER_ROLE_LABELS } from '../types/auth'
 import { ThemeToggle } from './ThemeToggle'
 
@@ -17,6 +17,22 @@ async function fetchUserReport(): Promise<UserReportRow[]> {
   const res = await fetch('/api/admin/reports/users', { credentials: 'include' })
   if (!res.ok) throw new Error(res.status === 403 ? 'Access denied' : `Failed to load report (${res.status})`)
   return res.json()
+}
+
+async function fetchModelReport(): Promise<ModelReportRow[]> {
+  const res = await fetch('/api/admin/reports/models', { credentials: 'include' })
+  if (!res.ok) throw new Error(res.status === 403 ? 'Access denied' : `Failed to load report (${res.status})`)
+  return res.json()
+}
+
+function formatCost(cost: number | null): string {
+  if (cost == null) return '—'
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 4 }).format(cost)
+}
+
+function formatRealSpend(usd: number | null): string {
+  if (usd == null) return '—'
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(usd)
 }
 
 function formatLastAccessed(iso: string | null): string {
@@ -42,6 +58,11 @@ export function ReportsPage({ onBack }: Props) {
   const { data: users = [], isLoading, error } = useQuery({
     queryKey: ['admin', 'reports', 'users'],
     queryFn: fetchUserReport,
+    staleTime: 60 * 1000,
+  })
+  const { data: models = [], isLoading: modelsLoading, error: modelsError } = useQuery({
+    queryKey: ['admin', 'reports', 'models'],
+    queryFn: fetchModelReport,
     staleTime: 60 * 1000,
   })
 
@@ -136,9 +157,63 @@ export function ReportsPage({ onBack }: Props) {
           </div>
         )}
 
-        <p className="mt-4 text-gray-500 dark:text-gray-400 text-xs">
-          Model and costs report will be added in a later phase.
-        </p>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mt-10 mb-4">Model and costs report</h2>
+
+        {modelsLoading && (
+          <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400 text-sm">
+            <span className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+            Loading…
+          </div>
+        )}
+
+        {modelsError && (
+          <p className="text-red-600 dark:text-red-400 text-sm">
+            {modelsError instanceof Error ? modelsError.message : 'Failed to load model report.'}
+          </p>
+        )}
+
+        {!modelsLoading && !modelsError && (
+          <>
+            <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table className="min-w-full text-sm text-left text-gray-700 dark:text-gray-300">
+                <thead className="bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100">
+                  <tr>
+                    <th scope="col" className="px-4 py-3 font-medium">Model</th>
+                    <th scope="col" className="px-4 py-3 font-medium text-right">Real spend (USD)</th>
+                    <th scope="col" className="px-4 py-3 font-medium text-right">Cost per 1K tokens (ref)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                  {models.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-4 py-6 text-center text-gray-500 dark:text-gray-400">
+                        No models found.
+                      </td>
+                    </tr>
+                  ) : (
+                    models.map((row) => (
+                      <tr key={row.model} className="bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                        <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">{row.model}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {formatRealSpend(row.real_cost_usd)}
+                          {row.cost_period_label && row.real_cost_usd != null && (
+                            <span className="block text-xs text-gray-500 dark:text-gray-400 font-normal">
+                              {row.cost_period_label}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">{formatCost(row.cost_per_1k_tokens)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-gray-500 dark:text-gray-400 text-xs">
+              Real spend: use an <strong>organization</strong> API key (OpenAI → Organization settings), not a project key—project keys with &quot;All&quot; cannot access org costs. Gemini: reference cost only.
+            </p>
+          </>
+        )}
       </main>
     </div>
   )
