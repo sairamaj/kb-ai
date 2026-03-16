@@ -1,0 +1,4 @@
+# Dependencies for Phase 1 deployment integration tests (Z4-03).
+# Install from repo root: pip install -r tests/deployment/requirements.txt
+pytest>=7.0.0
+httpx>=0.25.0

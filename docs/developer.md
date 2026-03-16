@@ -1,3 +1,32 @@
+### Production backend Docker (Z4-01)
+
+The backend has a production Dockerfile target suitable for App Service (no dev server, no `--reload`). See [README.MD](../README.MD#production-backend-image-z4-01) for build and run commands. Summary:
+
+- **Build:** `docker build --target prod -t promptkb-api ./backend` (from repo root).
+- **Run:** Pass `DATABASE_URL`, `SECRET_KEY`, and other required env; container runs `alembic upgrade head` then `uvicorn app.main:app --host 0.0.0.0 --port 8000`.
+- **Health:** `GET /health` returns 200 with `{"status": "ok", "db": "ok"}` when DB is reachable, or 503 with `{"status": "degraded", "db": "error"}` for readiness.
+
+### Phase 1 integration tests — container images (Z4-03)
+
+Integration tests verify that production backend and frontend container images run correctly. They require **Docker**, **Docker Compose**, and **Python** with pytest and httpx.
+
+- **Run all (build, start, test, tear down)** — from repo root:  
+  `.\scripts\run-integration-tests.ps1`
+- **Run tests only** (containers already running; integration stack uses 8010/8081):  
+  `$env:BACKEND_URL="http://localhost:8010"; $env:FRONTEND_URL="http://localhost:8081"; python -m pytest tests/deployment/ -v -m integration`
+
+Tests live in `tests/deployment/`. They assert: backend `GET /health` returns 200 with DB ok; frontend `GET /` returns 200 and body contains the app (e.g. "Prompt KB", `id="root"`). The integration compose file is `docker-compose.integration.yml` (backend 8010, frontend 8081, DB host 5433) so it can run alongside the dev stack. See [README.MD](../README.MD#phase-1-integration-tests-container-images-z4-03) and [deployment_stories.md](deployment_stories.md) (Z4-03).
+
+### Production frontend Docker (Z4-02)
+
+The frontend Dockerfile is multi-stage. The **production** target builds static assets with `npm run build` and serves them with nginx on port 8080 (no Vite dev server). See [README.MD](../README.MD#production-frontend-image-z4-02) for build and run commands. Summary:
+
+- **Build:** `docker build --target prod -t promptkb-web ./frontend` (from repo root). Set the backend API URL at build time with `--build-arg VITE_API_BASE_URL=<backend-origin>` (e.g. `https://promptkb-api.azurewebsites.net`) so the app calls the correct backend in production.
+- **Run:** `docker run --rm -p 8080:8080 promptkb-web`. The container serves the SPA on port 8080; API requests use the URL from `VITE_API_BASE_URL` if set.
+- **Development:** `docker-compose` uses `target: dev` for the frontend (Vite dev server on 5173).
+
+---
+
 ### Auth API — current user
 
 `GET /api/auth/me` (requires authenticated cookie) returns the current user:

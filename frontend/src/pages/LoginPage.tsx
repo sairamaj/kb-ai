@@ -1,4 +1,5 @@
 import { ThemeToggle } from '../components/ThemeToggle'
+import { getApiUrl } from '../api/base'
 
 function OAuthButton({
   href,
@@ -66,13 +67,13 @@ export function LoginPage({ onGoToFeed }: LoginPageProps) {
           </p>
 
           <OAuthButton
-            href="/api/auth/google/login"
+            href={getApiUrl('auth/google/login')}
             icon={<GoogleIcon />}
             label="Continue with Google"
           />
 
           <OAuthButton
-            href="/api/auth/github/login"
+            href={getApiUrl('auth/github/login')}
             icon={<GitHubIcon />}
             label="Continue with GitHub"
           />

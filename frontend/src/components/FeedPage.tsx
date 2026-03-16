@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FeedItem, FeedResponse } from '../types/conversation'
 import { ThemeToggle } from './ThemeToggle'
+import { getApiUrl } from '../api/base'
 
 interface Props {
   onOpenConversation: (id: string) => void
@@ -104,7 +105,7 @@ export function FeedPage({ onOpenConversation, onGoToLogin }: Props) {
     setIsLoading(true)
     setError(null)
     const params = new URLSearchParams({ page: String(page), per_page: '20' })
-    fetch(`/api/feed?${params.toString()}`)
+    fetch(getApiUrl(`feed?${params.toString()}`))
       .then((res) => {
         if (!res.ok) throw new Error(`Failed to load feed (${res.status})`)
         return res.json() as Promise<FeedResponse>

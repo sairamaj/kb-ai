@@ -3,6 +3,7 @@ import { MessageBubble } from './MessageBubble'
 import { ThemeToggle } from './ThemeToggle'
 import type { PublicConversationDetail } from '../types/conversation'
 import type { Message } from '../types/chat'
+import { getApiUrl } from '../api/base'
 
 interface Props {
   id: string
@@ -57,7 +58,7 @@ export function PublicConversationPage({ id, onGoToFeed, onGoToLogin }: Props) {
   useEffect(() => {
     setIsLoading(true)
     setError(null)
-    fetch(`/api/conversations/${id}/public`)
+    fetch(getApiUrl(`conversations/${id}/public`))
       .then(async (res) => {
         if (!res.ok) {
           setErrorStatus(res.status)

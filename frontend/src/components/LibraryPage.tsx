@@ -6,6 +6,7 @@ import { ThemeToggle } from './ThemeToggle'
 import { UsageDisplay } from './UsageDisplay'
 import type { CollectionSummary, CreateCollectionPayload, UpdateCollectionPayload } from '../types/collection'
 import type { ConversationSummary } from '../types/conversation'
+import { getApiUrl } from '../api/base'
 
 type LibraryView = 'conversations' | 'collections'
 type SortOption = 'recent' | 'oldest' | 'most_replayed'
@@ -89,7 +90,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const debouncedQuery = useDebounce(query, 300)
 
   useEffect(() => {
-    fetch('/api/conversations/tags', { credentials: 'include' })
+    fetch(getApiUrl('conversations/tags'), { credentials: 'include' })
       .then((r) => (r.ok ? (r.json() as Promise<string[]>) : Promise.resolve([])))
       .then(setAllTags)
       .catch(() => undefined)
@@ -105,7 +106,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     if (selectedCollectionId) params.set('collection_id', selectedCollectionId)
     params.set('sort', sort)
 
-    fetch(`/api/conversations?${params.toString()}`, { credentials: 'include' })
+    fetch(getApiUrl(`conversations?${params.toString()}`), { credentials: 'include' })
       .then((r) => {
         if (!r.ok) throw new Error(`Failed to load (${r.status})`)
         return r.json() as Promise<ConversationSummary[]>
@@ -123,7 +124,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   useEffect(() => {
     setCollectionsLoading(true)
     setCollectionsError(null)
-    fetch('/api/collections', { credentials: 'include' })
+    fetch(getApiUrl('collections'), { credentials: 'include' })
       .then((r) => {
         if (!r.ok) throw new Error(`Failed to load collections (${r.status})`)
         return r.json() as Promise<CollectionSummary[]>
@@ -148,7 +149,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     setCreateCollectionError(null)
     try {
       const body: CreateCollectionPayload = { name, visibility: createCollectionVisibility }
-      const res = await fetch('/api/collections', {
+      const res = await fetch(getApiUrl('collections'), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -178,7 +179,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   async function updateCollectionVisibility(collectionId: string, visibility: 'public' | 'private') {
     setCollectionVisibilityUpdating(collectionId)
     try {
-      const res = await fetch(`/api/collections/${collectionId}`, {
+      const res = await fetch(getApiUrl(`collections/${collectionId}`), {
         method: 'PATCH',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -203,7 +204,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   async function exportCollection(collectionId: string, format: 'md' | 'zip', collectionName: string) {
     setExportingCollectionId(collectionId)
     try {
-      const res = await fetch(`/api/collections/${collectionId}/export?format=${format}`, { credentials: 'include' })
+      const res = await fetch(getApiUrl(`collections/${collectionId}/export?format=${format}`), { credentials: 'include' })
       if (!res.ok) throw new Error(`Export failed (${res.status})`)
       const blob = await res.blob()
       const disposition = res.headers.get('Content-Disposition')
@@ -239,7 +240,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   async function addConversationToCollection(convId: string, collectionId: string) {
     setCollectionAction({ convId, collectionId })
     try {
-      const res = await fetch(`/api/collections/${collectionId}/conversations`, {
+      const res = await fetch(getApiUrl(`collections/${collectionId}/conversations`), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -261,7 +262,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     if (!conv) return
     setPinningConvId(convId)
     try {
-      const res = await fetch(`/api/conversations/${convId}`, {
+      const res = await fetch(getApiUrl(`conversations/${convId}`), {
         method: 'PATCH',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -279,7 +280,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   async function removeConversationFromCollection(convId: string, collectionId: string) {
     setCollectionAction({ convId, collectionId })
     try {
-      const res = await fetch(`/api/collections/${collectionId}/conversations/${convId}`, {
+      const res = await fetch(getApiUrl(`collections/${collectionId}/conversations/${convId}`), {
         method: 'DELETE',
         credentials: 'include',
       })
@@ -299,14 +300,14 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     setIsDeleting(true)
     setDeleteError(null)
     try {
-      const res = await fetch(`/api/conversations/${deleteTargetId}`, {
+      const res = await fetch(getApiUrl(`conversations/${deleteTargetId}`), {
         method: 'DELETE',
         credentials: 'include',
       })
       if (!res.ok) throw new Error(`Delete failed (${res.status})`)
       queryClient.invalidateQueries({ queryKey: ['me'] })
       setConversations((prev) => prev.filter((c) => c.id !== deleteTargetId))
-      fetch('/api/conversations/tags', { credentials: 'include' })
+      fetch(getApiUrl('conversations/tags'), { credentials: 'include' })
         .then((r) => (r.ok ? (r.json() as Promise<string[]>) : Promise.resolve([])))
         .then((tags) => {
           setAllTags(tags)

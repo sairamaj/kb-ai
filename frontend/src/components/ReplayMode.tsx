@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ConversationDetail, ConversationMessage } from '../types/conversation'
 import { MessageBubble } from './MessageBubble'
 import { Message } from '../types/chat'
+import { getApiUrl } from '../api/base'
 
 interface Turn {
   user: ConversationMessage
@@ -46,7 +47,7 @@ export function ReplayMode({ conv, onExit, onReplayCountUpdated }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0)
 
   useEffect(() => {
-    fetch(`/api/conversations/${conv.id}/replay`, {
+    fetch(getApiUrl(`conversations/${conv.id}/replay`), {
       method: 'POST',
       credentials: 'include',
     })

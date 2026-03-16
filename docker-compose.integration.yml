@@ -1,35 +1,34 @@
+# Phase 1 integration tests (Z4-03): production backend and frontend images
+# with a test database. Used by scripts/run-integration-tests.ps1 and manual runs.
+# Do not use production credentials or data.
+
 services:
   db:
     image: pgvector/pgvector:pg16
-    restart: unless-stopped
+    restart: "no"
     environment:
       POSTGRES_USER: kb_user
       POSTGRES_PASSWORD: kb_password
       POSTGRES_DB: kb_db
     ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kb_user -d kb_db"]
-      interval: 5s
+      interval: 3s
       timeout: 5s
       retries: 5
 
   backend:
     build:
       context: ./backend
-      target: dev
-    restart: unless-stopped
+      target: prod
+    image: promptkb-api:integration
+    restart: "no"
     ports:
-      - "8000:8000"
+      - "8010:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://kb_user:kb_password@db:5432/kb_db
-      SECRET_KEY: dev-secret-change-in-production
-    env_file:
-      - ./backend/.env
-    volumes:
-      - ./backend:/app
+      SECRET_KEY: integration-test-secret
     depends_on:
       db:
         condition: service_healthy
@@ -37,15 +36,12 @@ services:
   frontend:
     build:
       context: ./frontend
-      target: dev
-    restart: unless-stopped
+      target: prod
+      args:
+        VITE_API_BASE_URL: http://localhost:8010
+    image: promptkb-web:integration
+    restart: "no"
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "8081:8080"
     depends_on:
       - backend
-
-volumes:
-  postgres_data:

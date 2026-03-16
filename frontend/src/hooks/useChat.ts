@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Message } from '../types/chat'
+import { getApiUrl } from '../api/base'
 
 const SYSTEM_PROMPT =
   'You are a knowledgeable assistant helping a developer build their personal knowledge base. ' +
@@ -56,7 +57,7 @@ export async function streamChatReply(
 
   let response: Response
   try {
-    response = await fetch('/api/chat/stream', {
+    response = await fetch(getApiUrl('chat/stream'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: payload, provider, model }),
