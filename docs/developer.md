@@ -27,6 +27,107 @@ The frontend Dockerfile is multi-stage. The **production** target builds static 
 
 ---
 
+### Azure setup for GitHub Actions (Z4-04)
+
+These steps create an Azure service principal and federated credentials so the **Z4-04 build-and-push** workflow can authenticate to Azure and push images to ACR **without storing a password** (OIDC). Use **PowerShell** on Windows; replace placeholders with your values.
+
+**Prerequisites:** [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) installed and logged in (`az login`).
+
+#### 1. Set variables
+
+```powershell
+$subscriptionId = "YOUR_SUBSCRIPTION_ID"
+$resourceGroup  = "YOUR_RESOURCE_GROUP"   # e.g. promptkb-rg
+$appName        = "github-actions-promptkb"
+$ghOrg          = "YOUR_GH_ORG"
+$ghRepo         = "YOUR_GH_REPO"
+```
+
+#### 2. Login and select subscription
+
+```powershell
+az login
+az account set --subscription $subscriptionId
+```
+
+#### 3. Create app registration and service principal
+
+```powershell
+az ad app create --display-name $appName | Out-Null
+
+$appId = az ad app list --display-name $appName --query "[0].appId" -o tsv
+Write-Host "AZURE_CLIENT_ID = $appId"
+
+az ad sp create --id $appId | Out-Null
+```
+
+#### 4. Assign Contributor role
+
+Scope to a resource group (recommended):
+
+```powershell
+$rgScope = "/subscriptions/$subscriptionId/resourceGroups/$resourceGroup"
+az role assignment create --role "Contributor" --assignee $appId --scope $rgScope
+```
+
+Or scope to the whole subscription:
+
+```powershell
+az role assignment create --role "Contributor" --assignee $appId --scope "/subscriptions/$subscriptionId"
+```
+
+#### 5. Create federated credentials (no password)
+
+Use **single-quoted** JSON so PowerShell does not alter it. One credential per branch/workflow.
+
+**Main branch:**
+
+```powershell
+az ad app federated-credential create --id $appId --parameters '{"name":"github-actions-main","issuer":"https://token.actions.githubusercontent.com","subject":"repo:YOUR_GH_ORG/YOUR_GH_REPO:ref:refs/heads/main","audiences":["api://AzureADTokenExchange"],"description":"GitHub Actions main branch"}'
+```
+
+**Feature/deployment branch (optional):**
+
+```powershell
+az ad app federated-credential create --id $appId --parameters '{"name":"github-actions-feature-deployment","issuer":"https://token.actions.githubusercontent.com","subject":"repo:YOUR_GH_ORG/YOUR_GH_REPO:ref:refs/heads/feature/deployment","audiences":["api://AzureADTokenExchange"],"description":"GitHub Actions feature/deployment branch"}'
+```
+
+Replace `YOUR_GH_ORG` and `YOUR_GH_REPO` in both commands with your GitHub org and repo name.
+
+#### 6. Get tenant ID
+
+```powershell
+$tenantId = az account show --query tenantId -o tsv
+Write-Host "AZURE_TENANT_ID = $tenantId"
+```
+
+#### 7. GitHub repository secrets
+
+In GitHub: **Settings → Secrets and variables → Actions**. Add:
+
+| Secret | Value |
+|--------|--------|
+| `AZURE_CLIENT_ID` | `$appId` from step 3 |
+| `AZURE_TENANT_ID` | `$tenantId` from step 6 |
+| `AZURE_SUBSCRIPTION_ID` | `$subscriptionId` |
+| `AZURE_RESOURCE_GROUP_NAME` | `$resourceGroup` (e.g. `promptkb-rg`) |
+| `AZURE_ACR_NAME` | Your ACR name (globally unique, e.g. `promptkbacrprod`) |
+
+No `AZURE_CLIENT_SECRET` is needed when using federated credentials.
+
+#### Optional: client secret (not recommended)
+
+If you cannot use OIDC and must use a client secret:
+
+```powershell
+$secret = az ad app credential reset --id $appId --query password -o tsv
+Write-Host "AZURE_CLIENT_SECRET = $secret"
+```
+
+Store it in GitHub as `AZURE_CLIENT_SECRET`. The workflow would need to use `client-secret` with `azure/login` instead of OIDC; rotate the secret periodically.
+
+---
+
 ### Auth API — current user
 
 `GET /api/auth/me` (requires authenticated cookie) returns the current user:
