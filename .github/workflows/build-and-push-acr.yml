@@ -29,14 +29,14 @@ jobs:
       - name: Azure login (federated identity)
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.8.5
+          terraform_version: ${{ vars.TERRAFORM_VERSION || '1.8.5' }}
 
       - name: Terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -45,8 +45,8 @@ jobs:
       - name: Terraform apply (ACR only)
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          TF_VAR_resource_group_name: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
-          TF_VAR_acr_name: ${{ secrets.AZURE_ACR_NAME }}
+          TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP_NAME }}
+          TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
         run: terraform apply -auto-approve -input=false
 
       - name: Read ACR outputs from Terraform
