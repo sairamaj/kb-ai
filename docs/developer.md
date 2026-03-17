@@ -115,6 +115,8 @@ In GitHub: **Settings → Secrets and variables → Actions**. Add:
 
 No `AZURE_CLIENT_SECRET` is needed when using federated credentials.
 
+**Troubleshooting:** If the workflow fails with `No subscriptions found for ***` after OIDC login, the service principal has no role on the subscription. Re-run **step 4** (role assignment) so the app has Contributor (or Reader) on the subscription or resource group. Role changes can take a few minutes to propagate.
+
 #### Optional: client secret (not recommended)
 
 If you cannot use OIDC and must use a client secret:

@@ -26,6 +26,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Verify Azure variables
+        run: |
+          missing=""
+          [ -z "${{ vars.AZURE_CLIENT_ID }}" ] && missing="AZURE_CLIENT_ID $missing"
+          [ -z "${{ vars.AZURE_TENANT_ID }}" ] && missing="AZURE_TENANT_ID $missing"
+          [ -z "${{ vars.AZURE_SUBSCRIPTION_ID }}" ] && missing="AZURE_SUBSCRIPTION_ID $missing"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repo variables (Settings → Actions → Variables): $missing"
+            exit 1
+          fi
+
       - name: Azure login (federated identity)
         uses: azure/login@v2
         with:
