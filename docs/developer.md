@@ -311,3 +311,45 @@ Every help response is grounded in the help knowledge source so the bot does not
 - **Unauthenticated access:** The help-chat endpoint can be called without authentication. Unauthenticated users receive only **public/product-level** answers: product vision, feature list, role names and general limits (e.g. “Starter has a limit of 5 conversations”), and where to find more info. They do **not** receive “your plan,” “your usage,” or any personalized data. For questions like “What are my limits?”, the response describes limits in general (by role) and does not include personalized counts.
 - **Authenticated access:** When the request includes a valid auth cookie, the backend may attach the user’s role and usage (conversation/collection counts) and personalize answers (e.g. “With your Starter plan you currently have 3 of 5 conversations”) per CB-05.
 - **Security (CB-09):** Responses are grounded in the help knowledge source and must not expose secrets, API keys, undocumented internal URLs or paths, or invented features/limits. The system prompt enforces this; the backend also runs a lightweight response check and, if sensitive-looking patterns are detected, returns a safe generic message instead of the raw model output.
+
+---
+
+### Phase 2 integration tests — ACR image availability (Z4-05)
+
+After pushing images to Azure Container Registry (Z4-04), verify that both backend and frontend images exist in ACR with the expected tag. This gates deployment on successful push.
+
+**Prerequisites:** Azure CLI installed and authenticated (`az login`), and ACR access (`az acr login --name <acr_name>`).
+
+**Run verification (PowerShell, from repo root):**
+
+```powershell
+.\scripts\verify-acr-images.ps1 -AcrName <acr_name> -ImageTag <tag>
+```
+
+Example (after a manual push with tag `abc1234`):
+
+```powershell
+az acr login --name promptkbacrprod
+.\scripts\verify-acr-images.ps1 -AcrName promptkbacrprod -ImageTag abc1234
+```
+
+**Run verification (bash, Linux/macOS or CI):**
+
+```bash
+./scripts/verify-acr-images.sh <acr_name> <tag>
+```
+
+**In CI:** The Z4-04 build-and-push workflow runs this verification automatically after pushing images. If either `promptkb-api` or `promptkb-web` is missing the tag in ACR, the workflow fails.
+
+**Optional smoke test:** To additionally verify the backend image runs and responds to `GET /health`, pull and run the image locally with a test `DATABASE_URL`, then `curl http://localhost:8000/health`. This is not automated in the Phase 2 scripts; Phase 1 integration tests (Z4-03) cover container behavior before push.
+
+---
+
+### What and how to test
+
+| What to test | How to test |
+|--------------|-------------|
+| **Phase 1 — Container images (Z4-03)** | Run `.\scripts\run-integration-tests.ps1` from repo root. Builds prod images, starts backend + frontend + test DB, runs pytest against `http://localhost:8010` and `http://localhost:8081`, tears down. Requires Docker, Docker Compose, Python (pytest, httpx). |
+| **Phase 2 — ACR image availability (Z4-05)** | After pushing to ACR: `.\scripts\verify-acr-images.ps1 -AcrName <acr> -ImageTag <tag>`. Confirms `promptkb-api` and `promptkb-web` exist in ACR with the given tag. Requires Azure CLI and `az acr login`. In CI: the build-and-push workflow runs this step automatically after push. |
+| **Production backend image (Z4-01)** | Build: `docker build --target prod -t promptkb-api ./backend`. Run with `DATABASE_URL`, `SECRET_KEY`. Assert `GET /health` returns 200 with `{"status":"ok","db":"ok"}`. |
+| **Production frontend image (Z4-02)** | Build: `docker build --target prod -t promptkb-web ./frontend` (optionally `--build-arg VITE_API_BASE_URL=...`). Run, then `GET /` returns 200 and body contains "Prompt KB" and `id="root"`. |
