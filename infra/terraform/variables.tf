@@ -8,9 +8,4 @@ variable "acr_name" {
   type        = string
 }
 
-variable "tags" {
-  description = "Common tags to apply to ACR."
-  type        = map(string)
-  default     = {}
-}
 

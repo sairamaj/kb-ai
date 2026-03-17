@@ -53,7 +53,12 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init -input=false
 
-      - name: Terraform apply (ACR only)
+      # Remove legacy resource from state if present (migration to data-source-only; does not delete ACR)
+      - name: Terraform state migration
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform state rm azurerm_container_registry.promptkb 2>/dev/null || true
+
+      - name: Terraform apply (read ACR)
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP_NAME }}

@@ -33,6 +33,17 @@ These steps create an Azure service principal and federated credentials so the *
 
 **Prerequisites:** [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) installed and logged in (`az login`).
 
+#### 0. One-time: Create resource group and ACR
+
+Terraform only **reads** existing resources (it does not create them). Create the resource group and ACR once, outside Terraform:
+
+```powershell
+az group create --name promptkb-rg --location westus
+az acr create --resource-group promptkb-rg --name promptkb --sku Basic
+```
+
+Use your desired resource group name, ACR name (globally unique), and location. After this, the build-and-push workflow and `terraform apply` are fully rerunnable — they look up the existing ACR and output its values.
+
 #### 1. Set variables
 
 ```powershell

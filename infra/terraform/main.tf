@@ -13,18 +13,11 @@ provider "azurerm" {
   features {}
 }
 
-data "azurerm_resource_group" "promptkb" {
-  name = var.resource_group_name
-}
+# One-time setup: Create resource group and ACR outside Terraform (e.g. Azure CLI or portal).
+# This module only reads existing resources and outputs values for CI/CD — fully rerunnable.
 
-resource "azurerm_container_registry" "promptkb" {
+data "azurerm_container_registry" "promptkb" {
   name                = var.acr_name
-  resource_group_name = data.azurerm_resource_group.promptkb.name
-  location            = data.azurerm_resource_group.promptkb.location
-
-  sku           = "Basic"
-  admin_enabled = false
-
-  tags = var.tags
+  resource_group_name = var.resource_group_name
 }
 
