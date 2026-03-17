@@ -22,3 +22,6 @@ dist/
 
 # Postgres volume
 postgres_data/
+
+# Terraform
+.terraform/
