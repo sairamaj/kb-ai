@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars and fill in values. Do not commit terraform.tfvars.
+# Required for Z4-04 (ACR only):
+resource_group_name = "promptkb-rg"
+acr_name            = "promptkbacrprod"
+
+# Z4-06 — Backend Web App (set backend_enabled = true to create)
+backend_enabled     = false
+backend_app_name    = "promptkb-api"
+backend_image_tag   = "latest"  # Use commit SHA or version from build-and-push
+plan_name           = "promptkb-plan"
+
+# Required when backend_enabled = true:
+database_url     = "postgresql+asyncpg://user:pass@host:5432/dbname"
+secret_key       = "generate-with-python-secrets-token-hex-32"
+redirect_base_url = "https://promptkb-api.azurewebsites.net/api"
+frontend_url     = "https://promptkb.azurewebsites.net"
+
+# Optional (OAuth, AI keys):
+openai_api_key       = ""
+gemini_api_key       = ""
+google_client_id     = ""
+google_client_secret = ""
+github_client_id     = ""
+github_client_secret = ""

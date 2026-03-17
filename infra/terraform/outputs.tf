@@ -8,3 +8,8 @@ output "acr_login_server" {
   value       = data.azurerm_container_registry.promptkb.login_server
 }
 
+output "backend_url" {
+  description = "Backend Web App URL (Z4-06)."
+  value       = length(azurerm_linux_web_app.backend) > 0 ? "https://${azurerm_linux_web_app.backend[0].default_hostname}" : null
+}
+

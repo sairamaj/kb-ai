@@ -35,7 +35,7 @@ These steps create an Azure service principal and federated credentials so the *
 
 #### 0. One-time: Create resource group and ACR
 
-Terraform only **reads** existing resources (it does not create them). Create the resource group and ACR once, outside Terraform:
+Terraform **reads** the resource group and ACR (created outside Terraform). With `backend_enabled = true`, Terraform also **creates** the backend Web App (Z4-06). Create the resource group and ACR once, outside Terraform:
 
 ```powershell
 az group create --name promptkb-rg --location westus
@@ -345,11 +345,58 @@ az acr login --name promptkbacrprod
 
 ---
 
+### Backend Web App for Containers (Z4-06)
+
+The backend runs as an Azure Web App for Containers, pulling the `promptkb-api` image from ACR. Terraform creates an App Service plan (B1) and the backend Web App when `backend_enabled = true`.
+
+**Prerequisites:**
+
+- Resource group and ACR exist (Z4-04).
+- Images pushed to ACR: `promptkb-api:<tag>` (run the build-and-push workflow first).
+- PostgreSQL database reachable from Azure (e.g. Azure Database for PostgreSQL Flexible Server).
+
+**Deploy the backend:**
+
+1. Copy the example tfvars and fill in values:
+   ```powershell
+   cd infra/terraform
+   copy terraform.tfvars.example terraform.tfvars
+   # Edit terraform.tfvars: set backend_enabled = true, database_url, secret_key, redirect_base_url, frontend_url, etc.
+   ```
+
+2. Apply Terraform:
+   ```powershell
+   terraform init
+   terraform plan -out=plan.tfplan
+   terraform apply plan.tfplan
+   ```
+
+3. Verify: `curl https://<backend-app-name>.azurewebsites.net/health` returns 200 with `{"status":"ok","db":"ok"}`.
+
+**Variables (when `backend_enabled = true`):**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `database_url` | Yes | PostgreSQL connection string (e.g. `postgresql+asyncpg://user:pass@host:5432/db`) |
+| `secret_key` | Yes | JWT secret (generate with `python -c "import secrets; print(secrets.token_hex(32))"`) |
+| `redirect_base_url` | Yes | OAuth redirect base (e.g. `https://promptkb-api.azurewebsites.net/api`) |
+| `frontend_url` | Yes | Frontend origin (e.g. `https://promptkb.azurewebsites.net`) |
+| `backend_image_tag` | No | Image tag (default `latest`; use commit SHA from build-and-push) |
+| `openai_api_key`, `gemini_api_key` | No | AI provider keys |
+| `google_client_id`, `google_client_secret`, etc. | No | OAuth credentials |
+
+**Output:** `terraform output backend_url` returns the backend URL (e.g. `https://promptkb-api.azurewebsites.net`).
+
+**Secrets:** Do not commit `terraform.tfvars`. For production, consider Key Vault references in App Service settings instead of Terraform variables.
+
+---
+
 ### What and how to test
 
 | What to test | How to test |
 |--------------|-------------|
 | **Phase 1 — Container images (Z4-03)** | Run `.\scripts\run-integration-tests.ps1` from repo root. Builds prod images, starts backend + frontend + test DB, runs pytest against `http://localhost:8010` and `http://localhost:8081`, tears down. Requires Docker, Docker Compose, Python (pytest, httpx). |
 | **Phase 2 — ACR image availability (Z4-05)** | After pushing to ACR: `.\scripts\verify-acr-images.ps1 -AcrName <acr> -ImageTag <tag>`. Confirms `promptkb-api` and `promptkb-web` exist in ACR with the given tag. Requires Azure CLI and `az acr login`. In CI: the build-and-push workflow runs this step automatically after push. |
+| **Phase 3 — Deployed backend (Z4-06)** | After deploying the backend Web App: `curl https://<backend-app-name>.azurewebsites.net/health` returns 200 with `{"status":"ok","db":"ok"}` when DB is reachable. |
 | **Production backend image (Z4-01)** | Build: `docker build --target prod -t promptkb-api ./backend`. Run with `DATABASE_URL`, `SECRET_KEY`. Assert `GET /health` returns 200 with `{"status":"ok","db":"ok"}`. |
 | **Production frontend image (Z4-02)** | Build: `docker build --target prod -t promptkb-web ./frontend` (optionally `--build-arg VITE_API_BASE_URL=...`). Run, then `GET /` returns 200 and body contains "Prompt KB" and `id="root"`. |
