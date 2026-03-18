@@ -25,15 +25,41 @@ data "azurerm_container_registry" "promptkb" {
   resource_group_name = var.resource_group_name
 }
 
+locals {
+  app_service_plan_rg_name = coalesce(var.app_service_plan_resource_group_name, var.resource_group_name)
+}
+
+data "azurerm_resource_group" "app_service_plan_rg" {
+  name = local.app_service_plan_rg_name
+}
+
 # ---------------------------------------------------------------------------
 # Z4-06 — Backend Web App for Containers
 # ---------------------------------------------------------------------------
 
+data "azurerm_service_plan" "existing_promptkb" {
+  count               = var.backend_enabled && var.use_existing_plan ? 1 : 0
+  name                = var.existing_plan_name
+  resource_group_name = data.azurerm_resource_group.app_service_plan_rg.name
+}
+
+locals {
+  backend_service_plan_id = var.backend_enabled ? coalesce(
+    try(data.azurerm_service_plan.existing_promptkb[0].id, null),
+    try(azurerm_service_plan.promptkb[0].id, null),
+  ) : null
+  # Web App location MUST match the App Service Plan region. Using promptkb-rg's
+  # location when the plan lives in another RG/region causes 404 "Cannot find serverFarm".
+  backend_web_app_location = !var.backend_enabled ? data.azurerm_resource_group.promptkb.location : (
+    var.use_existing_plan ? data.azurerm_service_plan.existing_promptkb[0].location : azurerm_service_plan.promptkb[0].location
+  )
+}
+
 resource "azurerm_service_plan" "promptkb" {
-  count               = var.backend_enabled ? 1 : 0
+  count               = var.backend_enabled && !var.use_existing_plan ? 1 : 0
   name                = var.plan_name
-  location            = data.azurerm_resource_group.promptkb.location
-  resource_group_name = data.azurerm_resource_group.promptkb.name
+  location            = data.azurerm_resource_group.app_service_plan_rg.location
+  resource_group_name = data.azurerm_resource_group.app_service_plan_rg.name
   os_type             = "Linux"
   sku_name            = "B1" # Basic for Always On
 }
@@ -41,9 +67,9 @@ resource "azurerm_service_plan" "promptkb" {
 resource "azurerm_linux_web_app" "backend" {
   count               = var.backend_enabled ? 1 : 0
   name                = var.backend_app_name
-  location            = data.azurerm_resource_group.promptkb.location
+  location            = local.backend_web_app_location
   resource_group_name = data.azurerm_resource_group.promptkb.name
-  service_plan_id     = azurerm_service_plan.promptkb[0].id
+  service_plan_id     = local.backend_service_plan_id
   https_only          = true
 
   identity {

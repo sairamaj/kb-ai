@@ -1,6 +1,12 @@
 variable "resource_group_name" {
-  description = "Name of the existing Azure resource group where ACR and Web Apps live."
+  description = "Name of the existing Azure resource group where ACR and the backend Web App live."
   type        = string
+}
+
+variable "app_service_plan_resource_group_name" {
+  description = "Resource group containing the App Service plan (existing or to be created). Use when the plan is in a different RG than ACR/Web App; omit or null to use resource_group_name."
+  type        = string
+  default     = null
 }
 
 variable "acr_name" {
@@ -37,9 +43,21 @@ variable "backend_health_check_eviction_time_in_min" {
 }
 
 variable "plan_name" {
-  description = "Name of the App Service plan (shared by backend and frontend)."
+  description = "Name of the App Service plan to create when not using an existing plan."
   type        = string
   default     = "promptkb-plan"
+}
+
+variable "use_existing_plan" {
+  description = "If true, use an existing App Service plan instead of creating a new one."
+  type        = bool
+  default     = false
+}
+
+variable "existing_plan_name" {
+  description = "Name of the existing App Service plan to use when use_existing_plan=true."
+  type        = string
+  default     = ""
 }
 
 # App settings — pass via TF_VAR_* or -var / .tfvars (do not commit secrets).

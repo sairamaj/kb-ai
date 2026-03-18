@@ -27,3 +27,12 @@ postgres_data/
 .terraform/
 terraform.tfvars
 *.auto.tfvars
+
+# Terraform state
+*.tfstate
+*.tfstate.backup
+*.tfstate.*
+
+# Terraform binaries
+terraform.exe
+Terraform.exe

@@ -3,11 +3,18 @@
 resource_group_name = "promptkb-rg"
 acr_name            = "promptkbacrprod"
 
+# When the App Service plan is in a different RG than ACR/Web App (e.g. shared plan):
+# app_service_plan_resource_group_name = "shared-plans-rg"
+# The Web App is still created in resource_group_name; its Azure *region* follows the
+# plan (required). If apply fails with "Cannot find serverFarm", check plan region vs RG region.
+
 # Z4-06 — Backend Web App (set backend_enabled = true to create)
 backend_enabled     = false
 backend_app_name    = "promptkb-api"
 backend_image_tag   = "latest"  # Use commit SHA or version from build-and-push
 plan_name           = "promptkb-plan"
+use_existing_plan   = false
+existing_plan_name  = "existing-shared-plan-name"
 
 # Required when backend_enabled = true:
 database_url     = "postgresql+asyncpg://user:pass@host:5432/dbname"

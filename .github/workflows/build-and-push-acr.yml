@@ -107,6 +107,20 @@ jobs:
           docker push "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-api:${{ steps.tag.outputs.value }}"
           docker push "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:${{ steps.tag.outputs.value }}"
 
+      - name: Tag and push latest images
+        run: |
+          # Backend
+          docker tag \
+            "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-api:${{ steps.tag.outputs.value }}" \
+            "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-api:latest"
+          docker push "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-api:latest"
+
+          # Frontend
+          docker tag \
+            "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:${{ steps.tag.outputs.value }}" \
+            "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:latest"
+          docker push "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:latest"
+
       - name: Z4-05 — Verify ACR image availability
         run: |
           chmod +x scripts/verify-acr-images.sh

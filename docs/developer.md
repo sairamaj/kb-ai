@@ -382,6 +382,8 @@ The backend runs as an Azure Web App for Containers, pulling the `promptkb-api` 
 | `redirect_base_url` | Yes | OAuth redirect base (e.g. `https://promptkb-api.azurewebsites.net/api`) |
 | `frontend_url` | Yes | Frontend origin (e.g. `https://promptkb.azurewebsites.net`) |
 | `backend_image_tag` | No | Image tag (default `latest`; use commit SHA from build-and-push) |
+| `app_service_plan_resource_group_name` | No | RG that holds the App Service plan (existing or new). Set when the plan is not in the same RG as ACR/Web App (`resource_group_name`). |
+| `use_existing_plan` / `existing_plan_name` | No | Use a shared plan in `app_service_plan_resource_group_name` (or main RG if unset). |
 | `openai_api_key`, `gemini_api_key` | No | AI provider keys |
 | `google_client_id`, `google_client_secret`, etc. | No | OAuth credentials |
 
