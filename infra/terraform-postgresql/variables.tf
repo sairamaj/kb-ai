@@ -75,11 +75,17 @@ variable "pg_public_network_access_enabled" {
 }
 
 variable "pg_firewall_rules" {
-  description = "Map of firewall rules for PostgreSQL Flexible Server, keyed by rule name with start and end IP addresses."
+  description = "Firewall allowlist rules for PostgreSQL Flexible Server when public access is enabled. Populate with your client source IPs (for example: the backend App Service outbound IPs)."
   type = map(object({
     start_ip = string
     end_ip   = string
   }))
   default = {}
+}
+
+variable "pg_allowed_source_ips" {
+  description = "Simplified allowlist: list of individual IPv4 addresses to allow when `pg_public_network_access_enabled = true`. When set, Terraform will create firewall rules with `start_ip_address = end_ip_address = <ip>`. Prefer this over `pg_firewall_rules` for the common case."
+  type        = list(string)
+  default     = []
 }
 

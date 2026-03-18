@@ -43,3 +43,12 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "promptkb" {
   end_ip_address   = each.value.end_ip
 }
 
+resource "azurerm_postgresql_flexible_server_firewall_rule" "allowed_source_ips" {
+  for_each = { for idx, ip in var.pg_allowed_source_ips : idx => ip }
+  name      = "allow-outbound-${each.key}"
+  server_id = azurerm_postgresql_flexible_server.promptkb.id
+
+  start_ip_address = each.value
+  end_ip_address   = each.value
+}
+
