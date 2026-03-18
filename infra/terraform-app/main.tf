@@ -15,6 +15,7 @@ provider "azurerm" {
 
 # One-time setup: Create resource group and ACR outside Terraform (e.g. Azure CLI or portal).
 # Terraform reads existing ACR and RG; creates App Service plan and Web App (Z4-06).
+# PostgreSQL Flexible Server: see postgresql.tf.
 
 data "azurerm_resource_group" "promptkb" {
   name = var.resource_group_name
@@ -90,7 +91,7 @@ resource "azurerm_linux_web_app" "backend" {
   }
 
   app_settings = {
-    "WEBSITES_PORT"              = "8000"
+    "WEBSITES_PORT" = "8000"
 
     "DATABASE_URL"      = var.database_url
     "SECRET_KEY"        = var.secret_key
@@ -113,4 +114,3 @@ resource "azurerm_role_assignment" "backend_acr_pull" {
   role_definition_name = "AcrPull"
   principal_id         = azurerm_linux_web_app.backend[0].identity[0].principal_id
 }
-

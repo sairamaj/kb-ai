@@ -42,7 +42,7 @@ az group create --name promptkb-rg --location westus
 az acr create --resource-group promptkb-rg --name promptkb --sku Basic
 ```
 
-Use your desired resource group name, ACR name (globally unique), and location. After this, the build-and-push workflow and `terraform apply` are fully rerunnable — they look up the existing ACR and output its values.
+Use your desired resource group name, ACR name (globally unique), and location. The **Z4-04** GitHub Actions workflow runs Terraform in **`infra/terraform-acr`** to read the existing ACR and output its values. App Service, PostgreSQL, and related resources are managed from **`infra/terraform-app`** (separate state).
 
 #### 1. Set variables
 
@@ -347,7 +347,7 @@ az acr login --name promptkbacrprod
 
 ### Backend Web App for Containers (Z4-06)
 
-The backend runs as an Azure Web App for Containers, pulling the `promptkb-api` image from ACR. Terraform creates an App Service plan (B1) and the backend Web App when `backend_enabled = true`.
+The backend runs as an Azure Web App for Containers, pulling the `promptkb-api` image from ACR. Terraform in **`infra/terraform-app`** creates an App Service plan (B1) and the backend Web App when `backend_enabled = true`.
 
 **Prerequisites:**
 
@@ -359,7 +359,7 @@ The backend runs as an Azure Web App for Containers, pulling the `promptkb-api` 
 
 1. Copy the example tfvars and fill in values:
    ```powershell
-   cd infra/terraform
+   cd infra/terraform-app
    copy terraform.tfvars.example terraform.tfvars
    # Edit terraform.tfvars: set backend_enabled = true, database_url, secret_key, redirect_base_url, frontend_url, etc.
    ```

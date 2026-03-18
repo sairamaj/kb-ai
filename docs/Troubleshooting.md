@@ -66,6 +66,7 @@ az role assignment create \
   - After changes, run:
 
 ```bash
+cd infra/terraform-app
 terraform apply
 ```
 

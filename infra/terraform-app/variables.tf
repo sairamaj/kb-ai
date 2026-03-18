@@ -129,4 +129,3 @@ variable "frontend_url" {
   default     = ""
 }
 
-

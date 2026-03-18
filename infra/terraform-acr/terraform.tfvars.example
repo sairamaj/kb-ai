@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars for local testing. CI passes these via TF_VAR_*.
+resource_group_name = "promptkb-rg"
+acr_name            = "promptkbacrprod"

@@ -12,7 +12,8 @@ on:
       - feature/deployment
 
 env:
-  TF_WORKING_DIR: infra/terraform
+  # ACR data sources only — does not apply App Service or PostgreSQL.
+  TF_WORKING_DIR: infra/terraform-acr
 
 jobs:
   build-and-push:
@@ -52,11 +53,6 @@ jobs:
       - name: Terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init -input=false
-
-      # Remove legacy resource from state if present (migration to data-source-only; does not delete ACR)
-      - name: Terraform state migration
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform state rm azurerm_container_registry.promptkb 2>/dev/null || true
 
       - name: Terraform apply (read ACR)
         working-directory: ${{ env.TF_WORKING_DIR }}

@@ -108,12 +108,13 @@ Use prefix **Z4-** (e.g. Z4-01, Z4-02). Stories are ordered by phase and depende
 
 #### Implementation notes (Terraform + ACR push)
 
-- **Terraform module (ACR):**
-  - Location: `infra/terraform` (single root for now; later environments can use workspaces or separate roots).
-  - Resources: `azurerm_container_registry.promptkb` in an existing resource group (`var.resource_group_name`); outputs `acr_name` and `acr_login_server`.
-  - Required inputs (passed via env or `.tfvars`):
-    - `resource_group_name` — existing RG where ACR will live.
-    - `acr_name` — globally-unique ACR name (e.g. `promptkbacrprod`).
+- **Terraform (ACR resolution for CI):**
+  - Location: **`infra/terraform-acr`** — data sources only; reads existing RG + ACR; outputs `acr_name` and `acr_login_server`.
+  - ACR and RG are created outside Terraform (e.g. Azure CLI); see `docs/developer.md`.
+  - Required inputs (CI passes `TF_VAR_resource_group_name`, `TF_VAR_acr_name`):
+    - `resource_group_name`, `acr_name`.
+- **Terraform (app + database):**
+  - Location: **`infra/terraform-app`** — PostgreSQL Flexible Server, backend Web App, etc. Not run by the image push workflow.
 - **ACR repositories:**
   - Backend image: `<acr_login_server>/promptkb-api:<tag>`.
   - Frontend image: `<acr_login_server>/promptkb-web:<tag>`.
@@ -122,7 +123,7 @@ Use prefix **Z4-** (e.g. Z4-01, Z4-02). Stories are ordered by phase and depende
   - Trigger: `workflow_dispatch` (manual) and pushes to `main`/`feature/deployment`.
   - Behavior:
     - Logs in to Azure using OIDC (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` secrets).
-    - Runs `terraform init` and `terraform apply` in `infra/terraform` to ensure ACR exists.
+    - Runs `terraform init` and `terraform apply` in **`infra/terraform-acr`** to resolve ACR (does not create or modify PostgreSQL / Web App).
     - Reads `acr_login_server` and `acr_name` from Terraform outputs.
     - Computes image tag: explicit `image_tag` input, otherwise short commit SHA.
     - Builds production images using the backend and frontend Dockerfiles from Phase 1 and tags them as:
@@ -138,25 +139,20 @@ Use prefix **Z4-** (e.g. Z4-01, Z4-02). Stories are ordered by phase and depende
     - `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (for federated identity / `azure/login`).
     - `AZURE_RESOURCE_GROUP_NAME` (matches the resource group above).
     - `AZURE_ACR_NAME` (desired ACR name; must be globally unique).
-2. **Create or update the ACR via Terraform:**
-  - From a dev machine (once per environment), run:
-    - `cd infra/terraform`
-    - `terraform init`
-    - `terraform apply -var "resource_group_name=<rg-name>" -var "acr_name=<acr-name>"`
-  - After apply, record:
-    - `terraform output -raw acr_name`
-    - `terraform output -raw acr_login_server`
-3. **Build and push images from CI (recommended):**
+2. **Create ACR (Azure CLI):** See `docs/developer.md` (`az group create`, `az acr create`). Terraform CI only **reads** the existing ACR.
+3. **Optional — verify ACR via Terraform locally:**
+   - `cd infra/terraform-acr && terraform init && terraform apply` with the same `resource_group_name` / `acr_name` as CI.
+4. **Build and push images from CI (recommended):**
   - In GitHu b, go to **Actions → Z4-04 - Build and push images to ACR**.
   - Click **Run workflow**:
     - Optionally specify `image_tag` (e.g. `v0.1.0`); if omitted, the short commit SHA is used.
   - Wait for the job to:
-    - Run Terraform to ensure ACR exists.
+    - Run Terraform in `terraform-acr` to read ACR outputs.
     - Build the backend and frontend production images.
     - Push:
       - `<acr_login_server>/promptkb-api:<tag>`
       - `<acr_login_server>/promptkb-web:<tag>`.
-4. **Build and push images locally (fallback/manual):**
+5. **Build and push images locally (fallback/manual):**
   - Authenticate to Azure and ACR:
     - `az login`
     - `az acr login --name <acr_name>`
@@ -168,7 +164,7 @@ Use prefix **Z4-** (e.g. Z4-01, Z4-02). Stories are ordered by phase and depende
     - `cd ../frontend`
     - `docker build -f Dockerfile -t <acr_login_server>/promptkb-web:<tag> .`
     - `docker push <acr_login_server>/promptkb-web:<tag>`
-5. **Verify images and tags in ACR:**
+6. **Verify images and tags in ACR:**
   - Backend: `az acr repository show-tags --name <acr_name> --repository promptkb-api`.
   - Frontend: `az acr repository show-tags --name <acr_name> --repository promptkb-web`.
   - Confirm the expected `<tag>` appears for both repositories.
