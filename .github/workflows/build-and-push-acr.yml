@@ -14,6 +14,10 @@ on:
 env:
   # ACR data sources only — does not apply App Service or PostgreSQL.
   TF_WORKING_DIR: infra/terraform-acr
+  # App Service to update after pushing a new backend image tag.
+  WEBAPP_NAME: promptkb-api
+  # Reuse the same RG used for ACR in Terraform step (repo variable already required by workflow).
+  WEBAPP_RESOURCE_GROUP_NAME: ${{ vars.AZURE_RESOURCE_GROUP_NAME }}
 
 jobs:
   build-and-push:
@@ -116,6 +120,22 @@ jobs:
             "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:${{ steps.tag.outputs.value }}" \
             "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:latest"
           docker push "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:latest"
+
+      - name: Update App Service to unique image tag
+        run: |
+          # Use unique tag so App Service pulls the new image.
+          # If your App Service container credentials are already configured (managed identity via Terraform),
+          # this command should only switch the image tag.
+          az webapp config container set \
+            --name "${{ env.WEBAPP_NAME }}" \
+            --resource-group "${{ env.WEBAPP_RESOURCE_GROUP_NAME }}" \
+            --container-image-name "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-api:${{ steps.tag.outputs.value }}"
+
+      - name: Restart App Service
+        run: |
+          az webapp restart \
+            --name "${{ env.WEBAPP_NAME }}" \
+            --resource-group "${{ env.WEBAPP_RESOURCE_GROUP_NAME }}"
 
       - name: Z4-05 — Verify ACR image availability
         run: |
