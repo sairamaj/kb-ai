@@ -16,6 +16,7 @@ JWT_EXPIRY_SECONDS = 60 * 60 * 24 * 7  # 7 days
 # the Set-Cookie header on localhost:5173 (the same origin as the SPA).
 REDIRECT_BASE_URL = os.getenv("REDIRECT_BASE_URL", "http://localhost:5173/api")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "")
 
 # ---------------------------------------------------------------------------
 # Role-based resource limits (AUTHZ-14). Single source of truth for enforcement.

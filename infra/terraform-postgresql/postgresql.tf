@@ -27,6 +27,14 @@ resource "azurerm_postgresql_flexible_server" "promptkb" {
   public_network_access_enabled = var.pg_public_network_access_enabled
 }
 
+resource "azurerm_postgresql_flexible_server_configuration" "azure_extensions" {
+  count = length(var.pg_azure_extensions) > 0 ? 1 : 0
+
+  name       = "azure.extensions"
+  server_id = azurerm_postgresql_flexible_server.promptkb.id
+  value      = join(",", var.pg_azure_extensions)
+}
+
 resource "azurerm_postgresql_flexible_server_database" "promptkb" {
   name      = var.pg_database_name
   server_id = azurerm_postgresql_flexible_server.promptkb.id

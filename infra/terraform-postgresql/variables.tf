@@ -89,3 +89,9 @@ variable "pg_allowed_source_ips" {
   default     = []
 }
 
+variable "pg_azure_extensions" {
+  description = "Azure allow-list for PostgreSQL extensions via server parameter `azure.extensions` (e.g. [\"vector\"] for pgvector/pgvector extension name `vector`)."
+  type        = list(string)
+  default     = ["vector"]
+}
+

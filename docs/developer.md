@@ -393,12 +393,62 @@ The backend runs as an Azure Web App for Containers, pulling the `promptkb-api` 
 
 ---
 
+### Phase 3 integration tests — deployed backend (Z4-08)
+
+Automated smoke tests against a **deployed** backend (staging slot, staging Web App, or post-deploy verification). They are separate from Phase 1 container tests (`-m integration`) and from unit tests.
+
+**What they check**
+
+- `GET /health` → HTTP **200**, JSON with `status: ok` and `db: ok`.
+- `GET /auth/me` **without** credentials → **401** or **403** (API reachable and auth enforced).
+
+**Prerequisites:** Python with **pytest** and **httpx** (same as Phase 1: `pip install -r tests/deployment/requirements.txt` or your project venv).
+
+**Configure the backend URL** (no trailing slash, no path):
+
+| Variable | When to use |
+|----------|-------------|
+| **`TEST_BACKEND_URL`** | Recommended for staging / CI so it does not clash with a local `BACKEND_URL`. |
+| **`BACKEND_URL`** | Alternative; same meaning for these tests if `TEST_BACKEND_URL` is unset. |
+
+If **neither** is set, `pytest -m deployment` **skips** the Z4-08 tests (safe for local runs that only run other markers).
+
+**Run (PowerShell, repo root):**
+
+```powershell
+$env:TEST_BACKEND_URL = "https://<backend-app-name>.azurewebsites.net"
+.\scripts\run-deployed-backend-tests.ps1
+```
+
+Or invoke pytest directly:
+
+```powershell
+$env:TEST_BACKEND_URL = "https://promptkb-api.azurewebsites.net"
+python -m pytest tests/deployment/ -v -m deployment
+```
+
+**Run (bash / Linux / macOS / GitHub Actions):**
+
+```bash
+export TEST_BACKEND_URL="https://<backend-app-name>.azurewebsites.net"
+./scripts/run-deployed-backend-tests.sh
+# or:
+python -m pytest tests/deployment/ -v -m deployment
+```
+
+**CI / post-deploy:** After deploy, set `TEST_BACKEND_URL` (or `BACKEND_URL`) from Terraform output or secrets, then run the same pytest command. Use a **staging** URL where possible; avoid production-only credentials in tests—these tests use no auth.
+
+Tests live in `tests/deployment/test_deployed_backend.py` (marker **`deployment`**). See [deployment_stories.md](deployment_stories.md) (Z4-08).
+
+---
+
 ### What and how to test
 
 | What to test | How to test |
 |--------------|-------------|
 | **Phase 1 — Container images (Z4-03)** | Run `.\scripts\run-integration-tests.ps1` from repo root. Builds prod images, starts backend + frontend + test DB, runs pytest against `http://localhost:8010` and `http://localhost:8081`, tears down. Requires Docker, Docker Compose, Python (pytest, httpx). |
 | **Phase 2 — ACR image availability (Z4-05)** | After pushing to ACR: `.\scripts\verify-acr-images.ps1 -AcrName <acr> -ImageTag <tag>`. Confirms `promptkb-api` and `promptkb-web` exist in ACR with the given tag. Requires Azure CLI and `az acr login`. In CI: the build-and-push workflow runs this step automatically after push. |
-| **Phase 3 — Deployed backend (Z4-06)** | After deploying the backend Web App: `curl https://<backend-app-name>.azurewebsites.net/health` returns 200 with `{"status":"ok","db":"ok"}` when DB is reachable. |
+| **Phase 3 — Deployed backend smoke (Z4-08)** | Set `TEST_BACKEND_URL` (or `BACKEND_URL`) to the deployed API origin, then `python -m pytest tests/deployment/ -v -m deployment` or `.\scripts\run-deployed-backend-tests.ps1` / `./scripts/run-deployed-backend-tests.sh`. Asserts `/health` is 200 and `/auth/me` without cookie is 401/403. No Docker required. |
+| **Phase 3 — Manual health (Z4-06)** | Quick check: `curl https://<backend-app-name>.azurewebsites.net/health` returns 200 with `{"status":"ok","db":"ok"}` when DB is reachable. |
 | **Production backend image (Z4-01)** | Build: `docker build --target prod -t promptkb-api ./backend`. Run with `DATABASE_URL`, `SECRET_KEY`. Assert `GET /health` returns 200 with `{"status":"ok","db":"ok"}`. |
 | **Production frontend image (Z4-02)** | Build: `docker build --target prod -t promptkb-web ./frontend` (optionally `--build-arg VITE_API_BASE_URL=...`). Run, then `GET /` returns 200 and body contains "Prompt KB" and `id="root"`. |

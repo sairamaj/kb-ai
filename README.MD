@@ -192,6 +192,16 @@ Integration tests verify that the production backend and frontend images run cor
 
 **What is tested:** Backend `GET /health` returns 200 with `{"status":"ok","db":"ok"}`; frontend `GET /` returns 200 and the response contains the app (title "Prompt KB" and root div). The integration stack uses a dedicated test database (DB on host port 5433, backend 8010, frontend 8081) so it can run alongside a dev stack. See [docs/developer.md](docs/developer.md) and [docs/deployment_stories.md](docs/deployment_stories.md) (Z4-03).
 
+### Phase 3 integration tests: deployed backend (Z4-08)
+
+Smoke tests against a **live** backend URL (staging or post-deploy). Set `TEST_BACKEND_URL` (recommended) or `BACKEND_URL` to the API origin, then:
+
+```powershell
+python -m pytest tests/deployment/ -v -m deployment
+```
+
+Or: `.\scripts\run-deployed-backend-tests.ps1` (Windows) / `./scripts/run-deployed-backend-tests.sh` (bash). If neither env var is set, these tests are skipped. Full details: [docs/developer.md](docs/developer.md) (Phase 3 integration tests — deployed backend).
+
 ### Build and lint (frontend)
 
 ```bash
