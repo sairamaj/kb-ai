@@ -100,6 +100,7 @@ jobs:
           docker build \
             -f Dockerfile \
             --target prod \
+            --build-arg VITE_API_BASE_URL=https://promptkb-api.azurewebsites.net \
             -t "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:${{ steps.tag.outputs.value }}" \
             .
 
