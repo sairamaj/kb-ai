@@ -15,6 +15,6 @@ output "backend_url" {
 
 output "backend_outbound_ip_addresses" {
   description = "Backend App Service outbound IPs (use for PostgreSQL Flexible Server firewall allowlist when keeping public access)."
-  value       = length(azurerm_linux_web_app.backend) > 0 ? azurerm_linux_web_app.backend[0].outbound_ip_addresses : []
+  value       = length(azurerm_linux_web_app.backend) > 0 ? azurerm_linux_web_app.backend[0].outbound_ip_addresses : null
 }
 
