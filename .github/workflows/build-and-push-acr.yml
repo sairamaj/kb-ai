@@ -99,6 +99,7 @@ jobs:
         run: |
           docker build \
             -f Dockerfile \
+            --target prod \
             -t "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:${{ steps.tag.outputs.value }}" \
             .
 

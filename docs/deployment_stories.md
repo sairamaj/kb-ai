@@ -275,6 +275,18 @@ Use prefix **Z4-** (e.g. Z4-01, Z4-02). Stories are ordered by phase and depende
 - Given the frontend Web App is deployed and configured with the backend API URL, when a user opens `https://<frontend-app-name>.azurewebsites.net/`, then the app loads and can reach the backend (e.g. health or auth endpoints).
 - Given a full page reload on a client-side route (e.g. `/library`), then the server returns the SPA so the route is handled by the frontend router.
 
+#### Implementation notes (Terraform — Z4-09)
+
+- **Location:** **`infra/terraform-frontend`** — separate root from `terraform-app` (backend/DB).
+- **Inputs:** `resource_group_name`, `acr_name` (same ACR as backend; image `promptkb-web:<tag>`).
+- **App Service plan (aligned with backend pattern):**
+  - **`app_service_plan_resource_group_name`** — optional; use when the plan lives in a **different RG** (e.g. dedicated **test/staging plan RG**) while the Web App stays in `resource_group_name`.
+  - **`use_existing_plan` / `existing_plan_name`** — attach to an existing Linux plan (shared or test).
+  - Otherwise create a new plan with **`plan_name`** and **`plan_sku_name`** (default `B1`).
+- **Image tag:** variable **`frontend_image_tag`**.
+- **Backend URL:** the SPA uses **`VITE_API_BASE_URL` at Docker build time**; build/push must pass `--build-arg VITE_API_BASE_URL=https://<backend-app>.azurewebsites.net`. Terraform sets **`backend_api_public_url`** as app setting `BACKEND_API_PUBLIC_URL` for operators (same value as build arg).
+- **Enable resources:** set **`frontend_enabled = true`** in tfvars.
+
 ---
 
 ### Z4-10 — Integration tests: deployed frontend and E2E smoke (Phase 4)
