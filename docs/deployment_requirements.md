@@ -19,7 +19,7 @@ This plan lists what is needed to deploy the **Prompt Knowledge Base** app to a 
 - **Networking**
   - **Backend** reachable from the browser (or from a gateway that forwards `/api` to the backend). [backend/app/main.py](../backend/app/main.py) CORS is currently set for `localhost:5173` and `frontend:5173`; production must allow the actual frontend origin(s).
   - **Frontend** must call the backend at the correct base URL (e.g. same origin with reverse proxy, or configured API base URL).
-  - **OAuth:** Redirect URIs registered with Google/GitHub must match production (e.g. `https://<your-domain>/api/auth/google/callback`, `/api/auth/github/callback`).
+  - **OAuth:** Redirect URIs must match `{REDIRECT_BASE_URL}/auth/{provider}/callback` (see backend `REDIRECT_BASE_URL`). Direct API host: `https://<api-host>/auth/google/callback`; Vite-style same-origin proxy: `https://<spa>/api/auth/google/callback`.
 - **Health and startup**
   - Backend exposes [GET /health](../backend/app/main.py) for liveness/readiness. Orchestrator or load balancer should use it.
   - Database health: current [docker-compose.yml](../docker-compose.yml) uses `pg_isready`; equivalent check needed in cloud (e.g. readiness probe that verifies DB connectivity).

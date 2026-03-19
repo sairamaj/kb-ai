@@ -379,7 +379,7 @@ The backend runs as an Azure Web App for Containers, pulling the `promptkb-api` 
 |----------|----------|-------------|
 | `database_url` | Yes | PostgreSQL connection string (e.g. `postgresql+asyncpg://user:pass@host:5432/db`) |
 | `secret_key` | Yes | JWT secret (generate with `python -c "import secrets; print(secrets.token_hex(32))"`) |
-| `redirect_base_url` | Yes | OAuth redirect base (e.g. `https://promptkb-api.azurewebsites.net/api`) |
+| `redirect_base_url` | Yes | OAuth redirect base: API public origin, **no** `/api` suffix for direct App Service (e.g. `https://promptkb-api.azurewebsites.net`) |
 | `frontend_url` | Yes | Frontend origin (e.g. `https://promptkb.azurewebsites.net`) |
 | `backend_image_tag` | No | Image tag (default `latest`; use commit SHA from build-and-push) |
 | `app_service_plan_resource_group_name` | No | RG that holds the App Service plan (existing or new). Set when the plan is not in the same RG as ACR/Web App (`resource_group_name`). |

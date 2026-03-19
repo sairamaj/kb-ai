@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, create_access_token
 from app.config import (
+    AUTH_COOKIE_SAMESITE,
+    AUTH_COOKIE_SECURE,
     FRONTEND_URL,
     GITHUB_CLIENT_ID,
     GITHUB_CLIENT_SECRET,
@@ -96,6 +98,7 @@ async def oauth_login(provider: str, response: Response) -> RedirectResponse:
         value=state,
         httponly=True,
         samesite="lax",
+        secure=AUTH_COOKIE_SECURE,
         max_age=300,  # 5 minutes
         path="/",
     )
@@ -232,7 +235,8 @@ async def oauth_callback(
         key="access_token",
         value=jwt_token,
         httponly=True,
-        samesite="lax",
+        samesite=AUTH_COOKIE_SAMESITE,
+        secure=AUTH_COOKIE_SECURE,
         max_age=60 * 60 * 24 * 7,  # 7 days
         path="/",
     )

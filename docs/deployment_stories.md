@@ -230,7 +230,7 @@ Use prefix **Z4-** (e.g. Z4-01, Z4-02). Stories are ordered by phase and depende
 **Acceptance Criteria:**
 
 - Given the backend deployed with `FRONTEND_URL=https://promptkb.azurewebsites.net` (or the actual frontend URL), when a request is made to the backend with `Origin: <FRONTEND_URL>`, then the response includes an `Access-Control-Allow-Origin` that permits that origin (for credentialed requests as appropriate).
-- Given the deployment docs, then the required OAuth redirect URIs for production (e.g. `https://<backend>/api/auth/google/callback`) are documented.
+- Given the deployment docs, then the required OAuth redirect URIs for production (e.g. `https://<api-host>/auth/google/callback` when the API has no `/api` path prefix) are documented.
 
 ---
 

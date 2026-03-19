@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse
 
 # OAuth providers
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -12,11 +13,59 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
 # URLs
-# All OAuth redirect URIs go through the Vite proxy so the browser receives
-# the Set-Cookie header on localhost:5173 (the same origin as the SPA).
+# OAuth redirect_uri = REDIRECT_BASE_URL + "/auth/{provider}/callback" (see routers/auth.py).
+# Local dev: use http://localhost:5173/api because Vite proxies /api/* to the API (path is /api/... in the browser).
+# Production API on its own host (e.g. Azure App Service): use the public API origin only — no /api suffix —
+# because FastAPI routes live at /auth/..., not /api/auth/...
 REDIRECT_BASE_URL = os.getenv("REDIRECT_BASE_URL", "http://localhost:5173/api")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "")
+
+
+def _normalize_origin(url: str) -> str:
+    """Return scheme://host[:port] from a URL-ish string; empty on failure."""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    scheme = parsed.scheme
+    netloc = parsed.netloc
+    if not scheme and not netloc:
+        # Handle host/path (or bare host) by assuming https for cloud default.
+        host = raw.split("/", 1)[0]
+        return f"https://{host}" if host else ""
+    if scheme and netloc:
+        return f"{scheme}://{netloc}"
+    return ""
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _default_cookie_policy() -> tuple[str, bool]:
+    """
+    Choose cookie policy based on frontend/API topology:
+    - same-origin (local dev/proxy): Lax + non-secure allowed
+    - cross-origin (deployed frontend -> deployed API): None + Secure
+    """
+    frontend_origin = _normalize_origin(FRONTEND_URL)
+    api_origin = _normalize_origin(REDIRECT_BASE_URL)
+    is_cross_origin = bool(frontend_origin and api_origin and frontend_origin != api_origin)
+    is_https = frontend_origin.startswith("https://") or api_origin.startswith("https://")
+    if is_cross_origin:
+        return ("none", True)
+    return ("lax", is_https)
+
+
+_DEFAULT_SAMESITE, _DEFAULT_SECURE = _default_cookie_policy()
+AUTH_COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", _DEFAULT_SAMESITE).strip().lower()
+if AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    AUTH_COOKIE_SAMESITE = _DEFAULT_SAMESITE
+AUTH_COOKIE_SECURE = _bool_env("AUTH_COOKIE_SECURE", _DEFAULT_SECURE)
 
 # ---------------------------------------------------------------------------
 # Role-based resource limits (AUTHZ-14). Single source of truth for enforcement.

@@ -19,7 +19,7 @@ existing_plan_name  = "existing-shared-plan-name"
 # Required when backend_enabled = true:
 database_url      = "postgresql+asyncpg://user:pass@host:5432/dbname"
 secret_key        = "generate-with-python-secrets-token-hex-32"
-redirect_base_url = "https://promptkb-api.azurewebsites.net/api"
+redirect_base_url = "https://promptkb-api.azurewebsites.net"
 frontend_url      = "https://promptkb.azurewebsites.net"
 
 # Optional (OAuth, AI keys):

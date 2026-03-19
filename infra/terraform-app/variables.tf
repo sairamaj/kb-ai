@@ -118,7 +118,7 @@ variable "github_client_secret" {
 }
 
 variable "redirect_base_url" {
-  description = "OAuth redirect base URL (e.g. https://promptkb-api.azurewebsites.net/api). Required when backend_enabled=true."
+  description = "OAuth redirect base: public API origin with no path suffix (e.g. https://promptkb-api.azurewebsites.net). Do not append /api unless a reverse proxy serves the app under /api. Required when backend_enabled=true."
   type        = string
   default     = ""
 }
