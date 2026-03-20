@@ -6,6 +6,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from sqlalchemy import text  # noqa: E402
+from starlette.requests import Request  # noqa: E402
 from urllib.parse import urlparse  # noqa: E402
 
 import app.models  # noqa: F401, E402 — register models on Base.metadata
@@ -76,6 +77,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def no_store_auth_me(request: Request, call_next):
+    """Avoid cached 401/200 for credentialed GET /auth/me (CDN / browser / proxy)."""
+    response = await call_next(request)
+    if request.url.path == "/auth/me":
+        response.headers["Cache-Control"] = "private, no-store, must-revalidate"
+        existing = response.headers.get("vary")
+        if existing and "Cookie" not in {p.strip().lower() for p in existing.split(",")}:
+            response.headers["Vary"] = f"{existing}, Cookie"
+        elif not existing:
+            response.headers["Vary"] = "Cookie"
+    return response
+
 
 app.include_router(auth.router)
 app.include_router(chat.router)

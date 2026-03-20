@@ -179,10 +179,23 @@ If OAuth callback returns `302` but the next `GET /auth/me` returns `401 {"detai
   - `/auth/<provider>/callback?...` -> `302`
   - Immediate `/auth/me` -> `401`
 
-- **Root cause**
-  - In production, frontend and API are often on different origins.
-  - If auth cookie is set with `SameSite=Lax`, browser excludes it on cross-site `fetch` calls (even with `credentials: include`).
-  - Cross-origin auth requires `SameSite=None; Secure` on the JWT cookie.
+- **Root cause (host mismatch — pick one topology)**
+  - Cookies are **host-scoped**. The browser only sends `access_token` to the **same host** that set it (unless you use a shared `Domain`, which this app does not).
+
+  **A — API is the cookie host (typical split deploy)**  
+  - OAuth callback is served from **`https://<api-host>`** → `Set-Cookie` applies to **`<api-host>`**.  
+  - The SPA must call the API with **`VITE_API_BASE_URL=https://<api-host>`** at build time so `GET /auth/me` is **`https://<api-host>/auth/me`** (with `credentials: 'include'`).  
+  - **Symptom if wrong:** Cookie appears under **`<api-host>`** in DevTools but Network shows **`/auth/me`** on **`<frontend-host>`** (e.g. relative `/api/...`) → `401`.
+
+  **B — Frontend is the cookie host (same-origin `/api` proxy)**  
+  - The browser must load the OAuth callback URL on **`https://<frontend-host>`** (e.g. `.../api/auth/.../callback` behind a reverse proxy), so `Set-Cookie` applies to **`<frontend-host>`**.  
+  - The SPA must **not** use a separate API origin: omit `VITE_API_BASE_URL` and use relative **`/api/...`** only.  
+  - **Symptom if wrong:** Cookie under **`https://<frontend-host>`** but Network shows **`https://<api-host>/auth/me`** → `401` (cookie never sent cross-origin).
+
+  **Quick check:** Compare DevTools → Application → Cookies (**which host** has `access_token`) with Network → **`/auth/me` full URL**. They must be the **same registrable host** for auth to work.
+
+- **Root cause (cookie policy)**
+  - If frontend and API are different origins, `SameSite=Lax` on the JWT cookie blocks it on cross-site `fetch` (even with `credentials: include`). Use `SameSite=None; Secure` (see env below). The backend also derives this automatically when `FRONTEND_URL` and `REDIRECT_BASE_URL` origins differ.
 
 - **Required backend env**
   - `FRONTEND_URL=https://<frontend-host>`
@@ -195,12 +208,26 @@ If OAuth callback returns `302` but the next `GET /auth/me` returns `401 {"detai
   - Redirect URI must match: `<REDIRECT_BASE_URL>/auth/<provider>/callback`
   - Example: `https://promptkb-api.azurewebsites.net/auth/google/callback`
 
+- **`401` with `{"detail":"Not authenticated"}` (cookie missing on the server)**
+  - The API did **not** receive an `access_token` cookie on **that** request. DevTools can show a cookie in **Application** while a specific **Network** line still has no `Cookie` header (cross-site / third-party rules).
+  - **Stale cached response:** A CDN, reverse proxy, or browser cache can sometimes serve a **cached `401`** for `GET /auth/me` even when you later have a valid cookie. The API sets **`Cache-Control: private, no-store`** on `/auth/me` to prevent that; purge CDN cache or hard-refresh if you still suspect caching.
+  - **After OAuth:** The backend redirects to the SPA with URL fragment `#oauth-complete`; the SPA waits briefly before the first `/auth/me` so the browser can finish attaching **SameSite=None** cookies on cross-origin requests.
+
+- **`Cookie` is sent but `/auth/me` still returns 401 with `User not found; please log in again`**
+  - The JWT is valid for `SECRET_KEY`, but **`users.id` equals the JWT `sub` claim** is missing in the database the API uses.
+  - **Stale cookie after DB reset:** OAuth issued a token when the row existed (or you copied an old token). The DB was recreated, restored elsewhere, or pointed to a different server — the cookie still references the old UUID. **Fix:** Clear site cookies for the API host (and frontend), sign in with Google again, then confirm a **new** row appears in `users`.
+  - **You are not querying the same database as the app:** Compare the App Service **`DATABASE_URL`** (host, database name, user) to the connection you use in pgAdmin / Azure Query Editor / CLI. Query:  
+    `SELECT id, email, oauth_provider, oauth_sub FROM users WHERE id = '<sub-from-jwt-payload>';`  
+    If this returns no rows but login returned `302` with `Set-Cookie`, the app almost certainly committed to **another** database or connection string than the one you are inspecting (wrong server, wrong `dbname`, staging slot vs production, etc.).
+  - **Deployment slots:** Production and staging slots can have different **`DATABASE_URL`** values; verify the slot that serves traffic.
+
 - **Verification steps**
   1. Complete login flow in browser.
   2. In browser DevTools -> Network, inspect callback response headers and confirm:
      - `Set-Cookie: access_token=...; SameSite=None; Secure; HttpOnly`
   3. Inspect the `GET /auth/me` request and confirm cookie is included.
-  4. If still failing, clear cookies for both frontend and API hosts and retry login.
+  4. Read the **response JSON** `detail` (`Not authenticated` vs `User not found...` vs `Invalid token`).
+  5. If still failing, clear cookies for both frontend and API hosts and retry login.
 
 ## Terraform API apply fails for existing Web App
 

@@ -13,6 +13,15 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 async function fetchMe(): Promise<AuthUser> {
+  // After OAuth, backend redirects with #oauth-complete so the first credentialed
+  // cross-origin fetch can run after the browser finishes storing the cookie.
+  if (typeof window !== 'undefined') {
+    const frag = window.location.hash.replace(/^#/, '')
+    if (frag === 'oauth-complete') {
+      await new Promise((r) => setTimeout(r, 250))
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+    }
+  }
   const res = await fetch(getApiUrl('auth/me'), { credentials: 'include' })
   if (!res.ok) throw new Error('Not authenticated')
   return res.json()

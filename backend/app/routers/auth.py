@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -31,6 +32,22 @@ from app.limits import (
 from app.models import Collection, Conversation, OAuthProvider, User, UserRole
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _frontend_url_after_oauth() -> str:
+    """
+    SPA opens here after OAuth. Fragment signals the client to wait briefly before
+    the first cross-origin /auth/me (some browsers attach SameSite=None cookies a tick late).
+    """
+    raw = (FRONTEND_URL or "").strip()
+    if not raw:
+        return FRONTEND_URL
+    u = urlparse(raw)
+    if not u.scheme or not u.netloc:
+        return FRONTEND_URL
+    path = u.path if u.path else "/"
+    return urlunparse((u.scheme, u.netloc, path, u.params, u.query, "oauth-complete"))
+
 
 # ---------------------------------------------------------------------------
 # OAuth provider configuration
@@ -229,7 +246,7 @@ async def oauth_callback(
         avatar_url=user.avatar_url,
     )
 
-    resp = RedirectResponse(url=FRONTEND_URL, status_code=302)
+    resp = RedirectResponse(url=_frontend_url_after_oauth(), status_code=302)
     resp.delete_cookie("oauth_state")
     resp.set_cookie(
         key="access_token",
