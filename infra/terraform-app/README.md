@@ -6,7 +6,7 @@ This root manages:
 - App Service plan and Linux Web App (Z4-06) when `backend_enabled = true`
 - ACR is **read** via data source (create ACR outside Terraform; same as before)
 
-**CI/CD (image build/push)** uses **`../terraform-acr`** only — it does not run this stack.
+**CI/CD (image build/push)** uses **`../terraform-acr`** only in the **Z4-04** workflow. The **Z4-11** pipeline ([`.github/workflows/ci-cd-deploy.yml`](../../.github/workflows/ci-cd-deploy.yml)) also runs **`terraform apply`** in this directory to roll **`backend_image_tag`** after pushing images. See [docs/developer.md](../../docs/developer.md) (Z4-11).
 
 ## Migrating from `infra/terraform/`
 

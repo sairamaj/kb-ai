@@ -1,0 +1,281 @@
+# Z4-11 — Build and deploy pipeline (ACR + Web Apps)
+# Tests → build/push images → Terraform apply (terraform-app + terraform-frontend) to roll image tags.
+# Enable with repo variable CI_CD_DEPLOY_ENABLED=true and the secrets/vars documented in docs/developer.md.
+
+name: Z4-11 - CI/CD (test, ACR, deploy Web Apps)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Optional image tag (default short SHA)"
+        required: false
+        type: string
+      target_environment:
+        description: "GitHub Environment name for secrets/approvals (staging vs production)"
+        required: false
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+      run_post_deploy_smoke:
+        description: "Run Phase 3/4 smoke tests after deploy (needs smoke URLs in repo variables)"
+        required: false
+        type: boolean
+        default: true
+  push:
+    branches:
+      - main
+      - feature/deployment
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: z4-11-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_ACR_DIR: infra/terraform-acr
+  TF_APP_DIR: infra/terraform-app
+  TF_FRONTEND_DIR: infra/terraform-frontend
+
+jobs:
+  test:
+    name: Unit + Phase 1 integration (containers)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/deployment/requirements.txt
+
+      - name: Phase 1 — container integration (Z4-03)
+        run: |
+          chmod +x scripts/run-integration-tests.sh
+          ./scripts/run-integration-tests.sh
+        timeout-minutes: 20
+
+  deploy:
+    name: ACR push + Terraform Web Apps
+    runs-on: ubuntu-latest
+    needs: test
+    if: >
+      github.event_name != 'pull_request' &&
+      vars.CI_CD_DEPLOY_ENABLED == 'true'
+    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_environment || 'staging' }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Azure variables
+        run: |
+          missing=""
+          [ -z "${{ vars.AZURE_CLIENT_ID }}" ] && missing="AZURE_CLIENT_ID $missing"
+          [ -z "${{ vars.AZURE_TENANT_ID }}" ] && missing="AZURE_TENANT_ID $missing"
+          [ -z "${{ vars.AZURE_SUBSCRIPTION_ID }}" ] && missing="AZURE_SUBSCRIPTION_ID $missing"
+          [ -z "${{ vars.AZURE_RESOURCE_GROUP_NAME }}" ] && missing="AZURE_RESOURCE_GROUP_NAME $missing"
+          [ -z "${{ vars.AZURE_ACR_NAME }}" ] && missing="AZURE_ACR_NAME $missing"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repo variables: $missing"
+            exit 1
+          fi
+
+      - name: Verify Terraform secrets for Web App
+        run: |
+          if [ -z "${{ secrets.TF_VAR_DATABASE_URL }}" ] || [ -z "${{ secrets.TF_VAR_SECRET_KEY }}" ]; then
+            echo "::error::Deploy requires secrets TF_VAR_DATABASE_URL and TF_VAR_SECRET_KEY when backend is enabled."
+            exit 1
+          fi
+
+      - name: Azure login (federated identity)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TERRAFORM_VERSION || '1.8.5' }}
+
+      # --- Resolve ACR (data sources only) ---
+      - name: Terraform init (ACR)
+        working-directory: ${{ env.TF_ACR_DIR }}
+        run: terraform init -input=false
+
+      - name: Terraform apply (ACR)
+        working-directory: ${{ env.TF_ACR_DIR }}
+        env:
+          TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP_NAME }}
+          TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
+        run: terraform apply -auto-approve -input=false
+
+      - name: Read ACR outputs
+        id: tf-acr
+        working-directory: ${{ env.TF_ACR_DIR }}
+        run: |
+          echo "acr_login_server=$(terraform output -raw acr_login_server)" >> "$GITHUB_OUTPUT"
+          echo "acr_name=$(terraform output -raw acr_name)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "value=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login to ACR
+        run: az acr login --name "${{ steps.tf-acr.outputs.acr_name }}"
+
+      - name: Build backend image
+        working-directory: backend
+        run: |
+          docker build -f Dockerfile \
+            -t "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-api:${{ steps.tag.outputs.value }}" \
+            .
+
+      - name: Build frontend image
+        working-directory: frontend
+        env:
+          VITE_API: ${{ vars.BACKEND_PUBLIC_URL || 'https://promptkb-api.azurewebsites.net' }}
+        run: |
+          docker build -f Dockerfile --target prod \
+            --build-arg "VITE_API_BASE_URL=${VITE_API}" \
+            -t "${{ steps.tf-acr.outputs.acr_login_server }}/promptkb-web:${{ steps.tag.outputs.value }}" \
+            .
+
+      - name: Push images (tag + latest)
+        run: |
+          ACR="${{ steps.tf-acr.outputs.acr_login_server }}"
+          T="${{ steps.tag.outputs.value }}"
+          docker push "${ACR}/promptkb-api:${T}"
+          docker push "${ACR}/promptkb-web:${T}"
+          docker tag "${ACR}/promptkb-api:${T}" "${ACR}/promptkb-api:latest"
+          docker tag "${ACR}/promptkb-web:${T}" "${ACR}/promptkb-web:latest"
+          docker push "${ACR}/promptkb-api:latest"
+          docker push "${ACR}/promptkb-web:latest"
+
+      - name: Z4-05 — Verify ACR tags
+        run: |
+          chmod +x scripts/verify-acr-images.sh
+          ./scripts/verify-acr-images.sh "${{ steps.tf-acr.outputs.acr_name }}" "${{ steps.tag.outputs.value }}"
+
+      # --- Backend Web App image tag (terraform-app) ---
+      - name: Terraform init (app / backend)
+        working-directory: ${{ env.TF_APP_DIR }}
+        run: terraform init -input=false
+
+      - name: Terraform apply (backend Web App image tag)
+        working-directory: ${{ env.TF_APP_DIR }}
+        env:
+          TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP_NAME }}
+          TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
+          TF_VAR_backend_enabled: ${{ vars.TF_VAR_BACKEND_ENABLED || 'true' }}
+          TF_VAR_backend_app_name: ${{ vars.TF_VAR_BACKEND_APP_NAME || 'promptkb-api' }}
+          TF_VAR_backend_image_tag: ${{ steps.tag.outputs.value }}
+          TF_VAR_use_existing_plan: ${{ vars.TF_VAR_USE_EXISTING_PLAN || 'false' }}
+          TF_VAR_plan_name: ${{ vars.TF_VAR_PLAN_NAME || 'promptkb-plan' }}
+          TF_VAR_database_url: ${{ secrets.TF_VAR_DATABASE_URL }}
+          TF_VAR_secret_key: ${{ secrets.TF_VAR_SECRET_KEY }}
+          TF_VAR_openai_api_key: ${{ secrets.TF_VAR_OPENAI_API_KEY }}
+          TF_VAR_gemini_api_key: ${{ secrets.TF_VAR_GEMINI_API_KEY }}
+          TF_VAR_google_client_id: ${{ secrets.TF_VAR_GOOGLE_CLIENT_ID }}
+          TF_VAR_google_client_secret: ${{ secrets.TF_VAR_GOOGLE_CLIENT_SECRET }}
+          TF_VAR_github_client_id: ${{ secrets.TF_VAR_GITHUB_CLIENT_ID }}
+          TF_VAR_github_client_secret: ${{ secrets.TF_VAR_GITHUB_CLIENT_SECRET }}
+          TF_VAR_redirect_base_url: ${{ vars.TF_VAR_REDIRECT_BASE_URL || vars.BACKEND_PUBLIC_URL || 'https://promptkb-api.azurewebsites.net' }}
+          TF_VAR_frontend_url: ${{ vars.TF_VAR_FRONTEND_URL || vars.FRONTEND_PUBLIC_URL || 'https://promptkb.azurewebsites.net' }}
+          _OPT_APP_PLAN_RG: ${{ vars.TF_VAR_APP_SERVICE_PLAN_RG }}
+          _OPT_EXISTING_PLAN: ${{ vars.TF_VAR_EXISTING_PLAN_NAME }}
+        run: |
+          set -euo pipefail
+          if [ -n "${_OPT_APP_PLAN_RG:-}" ]; then export TF_VAR_app_service_plan_resource_group_name="$_OPT_APP_PLAN_RG"; fi
+          if [ -n "${_OPT_EXISTING_PLAN:-}" ]; then export TF_VAR_existing_plan_name="$_OPT_EXISTING_PLAN"; fi
+          terraform apply -auto-approve -input=false
+
+      # --- Frontend Web App image tag (terraform-frontend) ---
+      - name: Terraform init (frontend)
+        working-directory: ${{ env.TF_FRONTEND_DIR }}
+        run: terraform init -input=false
+
+      - name: Terraform apply (frontend Web App image tag)
+        working-directory: ${{ env.TF_FRONTEND_DIR }}
+        env:
+          TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP_NAME }}
+          TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
+          TF_VAR_frontend_enabled: ${{ vars.TF_VAR_FRONTEND_ENABLED || 'true' }}
+          TF_VAR_frontend_app_name: ${{ vars.TF_VAR_FRONTEND_APP_NAME || 'promptkb' }}
+          TF_VAR_frontend_image_tag: ${{ steps.tag.outputs.value }}
+          TF_VAR_use_existing_plan: ${{ vars.TF_VAR_FRONTEND_USE_EXISTING_PLAN || vars.TF_VAR_USE_EXISTING_PLAN || 'false' }}
+          TF_VAR_plan_name: ${{ vars.TF_VAR_FRONTEND_PLAN_NAME || 'promptkb-frontend-plan' }}
+          TF_VAR_plan_sku_name: ${{ vars.TF_VAR_FRONTEND_PLAN_SKU || 'B1' }}
+          TF_VAR_backend_api_public_url: ${{ vars.BACKEND_PUBLIC_URL || 'https://promptkb-api.azurewebsites.net' }}
+          _OPT_FRONTEND_PLAN_RG: ${{ vars.TF_VAR_FRONTEND_APP_SERVICE_PLAN_RG }}
+          _OPT_APP_PLAN_RG: ${{ vars.TF_VAR_APP_SERVICE_PLAN_RG }}
+          _OPT_FRONTEND_EXISTING_PLAN: ${{ vars.TF_VAR_FRONTEND_EXISTING_PLAN_NAME }}
+          _OPT_EXISTING_PLAN: ${{ vars.TF_VAR_EXISTING_PLAN_NAME }}
+        run: |
+          set -euo pipefail
+          PLAN_RG="${_OPT_FRONTEND_PLAN_RG:-}"
+          if [ -z "$PLAN_RG" ]; then PLAN_RG="${_OPT_APP_PLAN_RG:-}"; fi
+          if [ -n "$PLAN_RG" ]; then export TF_VAR_app_service_plan_resource_group_name="$PLAN_RG"; fi
+          EXIST="${_OPT_FRONTEND_EXISTING_PLAN:-}"
+          if [ -z "$EXIST" ]; then EXIST="${_OPT_EXISTING_PLAN:-}"; fi
+          if [ -n "$EXIST" ]; then export TF_VAR_existing_plan_name="$EXIST"; fi
+          terraform apply -auto-approve -input=false
+
+  post-deploy-smoke:
+    name: Post-deploy smoke (Z4-08 / Z4-10)
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: >
+      needs.deploy.result == 'success' &&
+      vars.CI_CD_DEPLOY_ENABLED == 'true' &&
+      vars.DEPLOY_SMOKE_BACKEND_URL != '' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_post_deploy_smoke != 'false')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/deployment/requirements.txt
+
+      - name: Phase 3 — deployed backend smoke
+        env:
+          TEST_BACKEND_URL: ${{ vars.DEPLOY_SMOKE_BACKEND_URL }}
+        run: |
+          chmod +x scripts/run-deployed-backend-tests.sh
+          ./scripts/run-deployed-backend-tests.sh
+
+      - name: Phase 4 — frontend E2E smoke (optional)
+        if: vars.DEPLOY_SMOKE_FRONTEND_URL != ''
+        env:
+          TEST_BACKEND_URL: ${{ vars.DEPLOY_SMOKE_BACKEND_URL }}
+          TEST_FRONTEND_URL: ${{ vars.DEPLOY_SMOKE_FRONTEND_URL }}
+        run: |
+          chmod +x scripts/run-deployed-e2e-tests.sh
+          ./scripts/run-deployed-e2e-tests.sh

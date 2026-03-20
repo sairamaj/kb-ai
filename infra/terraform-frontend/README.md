@@ -6,7 +6,7 @@ Provisions a **Linux Web App for Containers** that runs the **`promptkb-web`** i
 
 | Directory | Purpose |
 |-----------|---------|
-| **`../terraform-acr`** | Resolve ACR; CI build/push. |
+| **`../terraform-acr`** | Resolve ACR; CI build/push (Z4-04 / Z4-11). |
 | **`../terraform-app`** | PostgreSQL + backend API Web App + optional backend plan. |
 | **`terraform-frontend` (here)** | Frontend Web App + optional **dedicated** App Service plan. |
 

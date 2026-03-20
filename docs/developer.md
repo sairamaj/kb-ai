@@ -11,7 +11,8 @@ The backend has a production Dockerfile target suitable for App Service (no dev 
 Integration tests verify that production backend and frontend container images run correctly. They require **Docker**, **Docker Compose**, and **Python** with pytest and httpx.
 
 - **Run all (build, start, test, tear down)** — from repo root:  
-  `.\scripts\run-integration-tests.ps1`
+  - Windows: `.\scripts\run-integration-tests.ps1`  
+  - Linux / macOS / CI: `./scripts/run-integration-tests.sh`
 - **Run tests only** (containers already running; integration stack uses 8010/8081):  
   `$env:BACKEND_URL="http://localhost:8010"; $env:FRONTEND_URL="http://localhost:8081"; python -m pytest tests/deployment/ -v -m integration`
 
@@ -343,6 +344,61 @@ az acr login --name promptkbacrprod
 
 **Optional smoke test:** To additionally verify the backend image runs and responds to `GET /health`, pull and run the image locally with a test `DATABASE_URL`, then `curl http://localhost:8000/health`. This is not automated in the Phase 2 scripts; Phase 1 integration tests (Z4-03) cover container behavior before push.
 
+**In CI:** The Z4-04 workflow runs verification after push. The **Z4-11** workflow (below) also runs Z4-05 after push, before Terraform applies new image tags.
+
+---
+
+### CI/CD pipeline — build, ACR, Terraform Web Apps (Z4-11)
+
+Workflow: [`.github/workflows/ci-cd-deploy.yml`](../.github/workflows/ci-cd-deploy.yml) (**Z4-11 - CI/CD**).
+
+**Triggers**
+
+- **Pull requests** to `main`: runs **tests only** (Phase 1 container integration). Does not push or deploy.
+- **Push** to `main` or `feature/deployment`: runs tests; if deploy is enabled, pushes images and applies Terraform.
+- **workflow_dispatch**: optional `image_tag`, GitHub **Environment** (`staging` / `production`) for approvals or environment-scoped secrets, and optional post-deploy smoke toggle.
+
+**Enable deploy (push + Terraform)**
+
+1. Set repository variable **`CI_CD_DEPLOY_ENABLED`** to `true` (Settings → Actions → Variables).
+2. Configure the same Azure variables as Z4-04 (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP_NAME`, `AZURE_ACR_NAME`). The service principal needs permission to apply Terraform in the resource group (e.g. Contributor).
+3. Add **repository secrets** (Terraform reads `TF_VAR_*` automatically):
+   - **`TF_VAR_DATABASE_URL`** — PostgreSQL URL for the deployed backend (required when backend Web App is enabled).
+   - **`TF_VAR_SECRET_KEY`** — JWT secret (required when backend is enabled).
+   - Optional: `TF_VAR_OPENAI_API_KEY`, `TF_VAR_GEMINI_API_KEY`, `TF_VAR_GOOGLE_CLIENT_ID`, `TF_VAR_GOOGLE_CLIENT_SECRET`, `TF_VAR_GITHUB_CLIENT_ID`, `TF_VAR_GITHUB_CLIENT_SECRET` (omit or leave unset if unused).
+4. **Remote Terraform state:** Run `terraform init` / `apply` for `infra/terraform-app` and `infra/terraform-frontend` from your machine (or a shared backend) at least once so state is not only on ephemeral CI runners—or configure an [Azure Storage / Terraform Cloud backend](https://developer.hashicorp.com/terraform/language/settings/backends/azurerm) for those roots before relying on CI-only applies.
+
+**Repository variables (optional overrides)**
+
+| Variable | Purpose |
+|----------|---------|
+| `BACKEND_PUBLIC_URL` | Public API origin for frontend Docker build (`VITE_API_BASE_URL`); default `https://promptkb-api.azurewebsites.net`. |
+| `FRONTEND_PUBLIC_URL` | Used with `TF_VAR_FRONTEND_URL` when unset; default `https://promptkb.azurewebsites.net`. |
+| `TF_VAR_REDIRECT_BASE_URL` | OAuth redirect base; defaults to `BACKEND_PUBLIC_URL` if unset. |
+| `TF_VAR_FRONTEND_URL` | CORS / app setting; defaults to `FRONTEND_PUBLIC_URL` if unset. |
+| `TF_VAR_BACKEND_ENABLED` | `true` / `false` (default `true` in workflow). |
+| `TF_VAR_FRONTEND_ENABLED` | `true` / `false` (default `true`). |
+| `TF_VAR_BACKEND_APP_NAME`, `TF_VAR_FRONTEND_APP_NAME` | Web App names (defaults `promptkb-api`, `promptkb`). |
+| `TF_VAR_USE_EXISTING_PLAN`, `TF_VAR_EXISTING_PLAN_NAME`, `TF_VAR_APP_SERVICE_PLAN_RG` | Shared / cross-RG App Service plan (backend); only set when needed. |
+| `TF_VAR_FRONTEND_USE_EXISTING_PLAN`, `TF_VAR_FRONTEND_EXISTING_PLAN_NAME`, `TF_VAR_FRONTEND_APP_SERVICE_PLAN_RG` | Frontend plan overrides (fallback to backend plan vars when unset). |
+| `TF_VAR_PLAN_NAME`, `TF_VAR_FRONTEND_PLAN_NAME`, `TF_VAR_FRONTEND_PLAN_SKU` | Plan create settings when not using an existing plan. |
+
+**Post-deploy smoke (Z4-08 / Z4-10)**
+
+- Set **`DEPLOY_SMOKE_BACKEND_URL`** to the deployed API origin (e.g. `https://promptkb-api.azurewebsites.net`). The workflow runs `./scripts/run-deployed-backend-tests.sh` after a successful deploy.
+- Optionally set **`DEPLOY_SMOKE_FRONTEND_URL`** to also run `./scripts/run-deployed-e2e-tests.sh`.
+- On **workflow_dispatch**, uncheck **run_post_deploy_smoke** to skip smoke (e.g. first deploy before URLs exist).
+
+**Staging vs production**
+
+- Use GitHub **Environments** named `staging` and `production`. On manual runs, choose **target_environment** so production can use **required reviewers** while staging deploys automatically.
+- Push events use the **`staging`** environment by default for the deploy job (create the environment in GitHub if needed, or add a matching environment with the same secrets/vars).
+
+**Z4-04 vs Z4-11**
+
+- **Z4-04** ([`build-and-push-acr.yml`](../.github/workflows/build-and-push-acr.yml)): build, push to ACR, verify tags—**no** Terraform Web App update (image rollout is Z4-11 or manual `terraform apply`).
+- **Z4-11**: tests → ACR push → **`terraform apply`** in `infra/terraform-app` and `infra/terraform-frontend` with `backend_image_tag` / `frontend_image_tag` set to the build tag (short SHA or workflow input).
+
 ---
 
 ### Backend Web App for Containers (Z4-06)
@@ -498,7 +554,8 @@ Tests live in `tests/deployment/test_deployed_frontend_e2e.py` (marker **`deploy
 | What to test | How to test |
 |--------------|-------------|
 | **Phase 1 — Container images (Z4-03)** | Run `.\scripts\run-integration-tests.ps1` from repo root. Builds prod images, starts backend + frontend + test DB, runs pytest against `http://localhost:8010` and `http://localhost:8081`, tears down. Requires Docker, Docker Compose, Python (pytest, httpx). |
-| **Phase 2 — ACR image availability (Z4-05)** | After pushing to ACR: `.\scripts\verify-acr-images.ps1 -AcrName <acr> -ImageTag <tag>`. Confirms `promptkb-api` and `promptkb-web` exist in ACR with the given tag. Requires Azure CLI and `az acr login`. In CI: the build-and-push workflow runs this step automatically after push. |
+| **Phase 2 — ACR image availability (Z4-05)** | After pushing to ACR: `.\scripts\verify-acr-images.ps1 -AcrName <acr> -ImageTag <tag>`. Confirms `promptkb-api` and `promptkb-web` exist in ACR with the given tag. Requires Azure CLI and `az acr login`. In CI: Z4-04 and Z4-11 workflows run this after push. |
+| **Phase 5 — CI/CD (Z4-11)** | Enable `CI_CD_DEPLOY_ENABLED`, add `TF_VAR_*` secrets, then push to `main` / `feature/deployment` or run **Z4-11 - CI/CD** from Actions. See section *CI/CD pipeline — Z4-11* above. |
 | **Phase 3 — Deployed backend smoke (Z4-08)** | Set `TEST_BACKEND_URL` (or `BACKEND_URL`) to the deployed API origin, then `python -m pytest tests/deployment/ -v -m deployment` or `.\scripts\run-deployed-backend-tests.ps1` / `./scripts/run-deployed-backend-tests.sh`. Asserts `/health` is 200 and `/auth/me` without cookie is 401/403. No Docker required. |
 | **Phase 4 — Deployed frontend + E2E smoke (Z4-10)** | Set `TEST_FRONTEND_URL` (or `FRONTEND_URL`) and `TEST_BACKEND_URL` (or `BACKEND_URL`), then `python -m pytest tests/deployment/ -v -m deployment_e2e` or `.\scripts\run-deployed-e2e-tests.ps1` / `./scripts/run-deployed-e2e-tests.sh`. Asserts frontend `/` and `/feed` serve the SPA and backend `/health` is 200. No Docker required. Optional in CI. |
 | **Phase 3 — Manual health (Z4-06)** | Quick check: `curl https://<backend-app-name>.azurewebsites.net/health` returns 200 with `{"status":"ok","db":"ok"}` when DB is reachable. |
