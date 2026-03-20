@@ -202,6 +202,18 @@ python -m pytest tests/deployment/ -v -m deployment
 
 Or: `.\scripts\run-deployed-backend-tests.ps1` (Windows) / `./scripts/run-deployed-backend-tests.sh` (bash). If neither env var is set, these tests are skipped. Full details: [docs/developer.md](docs/developer.md) (Phase 3 integration tests — deployed backend).
 
+### Phase 4 integration tests: deployed frontend and E2E smoke (Z4-10)
+
+After both Web Apps are deployed, smoke the **live** frontend and backend together (HTTP only; no browser automation).
+
+Set **`TEST_FRONTEND_URL`** (or `FRONTEND_URL`) and **`TEST_BACKEND_URL`** (or `BACKEND_URL`), then:
+
+```powershell
+python -m pytest tests/deployment/ -v -m deployment_e2e
+```
+
+Or: `.\scripts\run-deployed-e2e-tests.ps1` / `./scripts/run-deployed-e2e-tests.sh`. If the required URLs for a given test are unset, that test is skipped. Full details: [docs/developer.md](docs/developer.md) (Phase 4 — Z4-10).
+
 ### Build and lint (frontend)
 
 ```bash

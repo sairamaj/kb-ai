@@ -442,6 +442,57 @@ Tests live in `tests/deployment/test_deployed_backend.py` (marker **`deployment`
 
 ---
 
+### Phase 4 integration tests — deployed frontend and E2E smoke (Z4-10)
+
+HTTP-level smoke (no Playwright): confirms the **deployed** SPA is served and the **deployed** backend `/health` responds—validating end-to-end URLs without user credentials.
+
+**What they check**
+
+- `GET /` on the frontend origin → **200**, HTML contains **Prompt KB** and `id="root"`.
+- `GET /feed` on the frontend → **200**, same SPA shell (deep link / client route; nginx `try_files`).
+- `GET /health` on the backend → **200**, JSON `status` and `db` **ok** (same shape as Z4-08).
+
+**Prerequisites:** Python with **pytest** and **httpx** (`pip install -r tests/deployment/requirements.txt`).
+
+**Configure URLs** (no trailing slash, no path):
+
+| Variable | When to use |
+|----------|-------------|
+| **`TEST_FRONTEND_URL`** | Recommended for staging / CI. |
+| **`FRONTEND_URL`** | Alternative if `TEST_FRONTEND_URL` is unset. |
+| **`TEST_BACKEND_URL`** | Recommended; same as Z4-08. |
+| **`BACKEND_URL`** | Alternative if `TEST_BACKEND_URL` is unset. |
+
+If a test’s URL is missing, that test **skips** (e.g. frontend-only env runs only backend test if only backend vars are set). For a **full** Phase 4 run, set both frontend and backend.
+
+**Run (PowerShell, repo root):**
+
+```powershell
+$env:TEST_FRONTEND_URL = "https://<frontend-app-name>.azurewebsites.net"
+$env:TEST_BACKEND_URL = "https://<backend-app-name>.azurewebsites.net"
+.\scripts\run-deployed-e2e-tests.ps1
+```
+
+Or pytest only:
+
+```powershell
+python -m pytest tests/deployment/ -v -m deployment_e2e
+```
+
+**Run (bash):**
+
+```bash
+export TEST_FRONTEND_URL="https://<frontend-app-name>.azurewebsites.net"
+export TEST_BACKEND_URL="https://<backend-app-name>.azurewebsites.net"
+./scripts/run-deployed-e2e-tests.sh
+```
+
+**CI / post-deploy:** Optional job after frontend + backend deploy: set both URL secrets/variables, then run `pytest -m deployment_e2e` or the script above. Prefer **staging** URLs.
+
+Tests live in `tests/deployment/test_deployed_frontend_e2e.py` (marker **`deployment_e2e`**). See [deployment_stories.md](deployment_stories.md) (Z4-10).
+
+---
+
 ### What and how to test
 
 | What to test | How to test |
@@ -449,6 +500,7 @@ Tests live in `tests/deployment/test_deployed_backend.py` (marker **`deployment`
 | **Phase 1 — Container images (Z4-03)** | Run `.\scripts\run-integration-tests.ps1` from repo root. Builds prod images, starts backend + frontend + test DB, runs pytest against `http://localhost:8010` and `http://localhost:8081`, tears down. Requires Docker, Docker Compose, Python (pytest, httpx). |
 | **Phase 2 — ACR image availability (Z4-05)** | After pushing to ACR: `.\scripts\verify-acr-images.ps1 -AcrName <acr> -ImageTag <tag>`. Confirms `promptkb-api` and `promptkb-web` exist in ACR with the given tag. Requires Azure CLI and `az acr login`. In CI: the build-and-push workflow runs this step automatically after push. |
 | **Phase 3 — Deployed backend smoke (Z4-08)** | Set `TEST_BACKEND_URL` (or `BACKEND_URL`) to the deployed API origin, then `python -m pytest tests/deployment/ -v -m deployment` or `.\scripts\run-deployed-backend-tests.ps1` / `./scripts/run-deployed-backend-tests.sh`. Asserts `/health` is 200 and `/auth/me` without cookie is 401/403. No Docker required. |
+| **Phase 4 — Deployed frontend + E2E smoke (Z4-10)** | Set `TEST_FRONTEND_URL` (or `FRONTEND_URL`) and `TEST_BACKEND_URL` (or `BACKEND_URL`), then `python -m pytest tests/deployment/ -v -m deployment_e2e` or `.\scripts\run-deployed-e2e-tests.ps1` / `./scripts/run-deployed-e2e-tests.sh`. Asserts frontend `/` and `/feed` serve the SPA and backend `/health` is 200. No Docker required. Optional in CI. |
 | **Phase 3 — Manual health (Z4-06)** | Quick check: `curl https://<backend-app-name>.azurewebsites.net/health` returns 200 with `{"status":"ok","db":"ok"}` when DB is reachable. |
 | **Production backend image (Z4-01)** | Build: `docker build --target prod -t promptkb-api ./backend`. Run with `DATABASE_URL`, `SECRET_KEY`. Assert `GET /health` returns 200 with `{"status":"ok","db":"ok"}`. |
 | **Production frontend image (Z4-02)** | Build: `docker build --target prod -t promptkb-web ./frontend` (optionally `--build-arg VITE_API_BASE_URL=...`). Run, then `GET /` returns 200 and body contains "Prompt KB" and `id="root"`. |
