@@ -129,6 +129,17 @@ No `AZURE_CLIENT_SECRET` is needed when using federated credentials.
 
 **Troubleshooting:** If the workflow fails with `No subscriptions found for ***` after OIDC login, the service principal has no role on the subscription. Re-run **step 4** (role assignment) so the app has Contributor (or Reader) on the subscription or resource group. Role changes can take a few minutes to propagate.
 
+**OIDC `AADSTS700213` / “No matching federated identity record” for subject `repo:…:environment:…`:** GitHub’s token **subject** depends on whether the job uses a GitHub **Environment**:
+- **No** `environment:` on the job → subject is like `repo:YOUR_ORG/YOUR_REPO:ref:refs/heads/main` (or `…/feature/deployment`). That matches the federated credentials in **step 5** above.
+- **`environment:` set** (e.g. `staging`) → subject is `repo:YOUR_ORG/YOUR_REPO:environment:staging`. Azure needs a **separate** federated credential for that exact subject.
+
+The **Z4-11** workflow intentionally does **not** set `environment:` on the deploy job so it stays compatible with branch-only federation. If you add `environment:` to a job yourself, create matching credentials, for example:
+
+```powershell
+# Staging (repeat for production with :environment:production)
+az ad app federated-credential create --id $appId --parameters '{"name":"github-actions-env-staging","issuer":"https://token.actions.githubusercontent.com","subject":"repo:YOUR_GH_ORG/YOUR_GH_REPO:environment:staging","audiences":["api://AzureADTokenExchange"],"description":"GitHub Actions environment staging"}'
+```
+
 #### Optional: client secret (not recommended)
 
 If you cannot use OIDC and must use a client secret:

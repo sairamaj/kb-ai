@@ -11,14 +11,6 @@ on:
         description: "Optional image tag (default short SHA)"
         required: false
         type: string
-      target_environment:
-        description: "GitHub Environment name for secrets/approvals (staging vs production)"
-        required: false
-        default: staging
-        type: choice
-        options:
-          - staging
-          - production
       run_post_deploy_smoke:
         description: "Run Phase 3/4 smoke tests after deploy (needs smoke URLs in repo variables)"
         required: false
@@ -72,7 +64,9 @@ jobs:
     if: >
       github.event_name != 'pull_request' &&
       vars.CI_CD_DEPLOY_ENABLED == 'true'
-    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_environment || 'staging' }}
+    # No job-level `environment:` — that would change the OIDC subject to
+    # repo:ORG/REPO:environment:<name> and require extra Azure federated credentials.
+    # Branch-based federation (repo:ORG/REPO:ref:refs/heads/<branch>) matches docs/developer.md.
     permissions:
       id-token: write
       contents: read
