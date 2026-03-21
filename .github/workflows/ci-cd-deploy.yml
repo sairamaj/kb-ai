@@ -171,10 +171,29 @@ jobs:
           chmod +x scripts/verify-acr-images.sh
           ./scripts/verify-acr-images.sh "${{ steps.tf-acr.outputs.acr_name }}" "${{ steps.tag.outputs.value }}"
 
+      # Blob container for terraform-app / terraform-frontend remote state (storage account promptkb, RG prompt_rg).
+      - name: Ensure Terraform state container exists
+        run: |
+          set -euo pipefail
+          if az storage container show --account-name promptkb --name tfstate --auth-mode login >/dev/null 2>&1; then
+            echo "State container tfstate already exists."
+          else
+            az storage container create --account-name promptkb --name tfstate --auth-mode login
+          fi
+
       # --- Backend Web App image tag (terraform-app) ---
+      # ARM_* OIDC for Azure Storage backend + provider (map GitHub runner ACTIONS_ID_TOKEN_* → ARM_OIDC_*).
       - name: Terraform init (app / backend)
         working-directory: ${{ env.TF_APP_DIR }}
-        run: terraform init -input=false
+        env:
+          ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+        run: |
+          export ARM_OIDC_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+          export ARM_OIDC_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
+          terraform init -input=false
 
       # TF_VAR_USE_EXISTING_PLAN / plan name / plan RG must be Actions *Variables* (vars.*) for
       # TF_VAR_use_existing_plan to see them. If you mistakenly added them as Secrets, we also
@@ -182,6 +201,10 @@ jobs:
       - name: Terraform apply (backend Web App image tag)
         working-directory: ${{ env.TF_APP_DIR }}
         env:
+          ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
           TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP_NAME }}
           TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
           TF_VAR_backend_enabled: ${{ vars.TF_VAR_BACKEND_ENABLED || 'true' }}
@@ -203,6 +226,8 @@ jobs:
           _OPT_EXISTING_PLAN: ${{ vars.TF_VAR_EXISTING_PLAN_NAME || secrets.TF_VAR_EXISTING_PLAN_NAME }}
         run: |
           set -euo pipefail
+          export ARM_OIDC_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+          export ARM_OIDC_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
           if [ -n "${_OPT_APP_PLAN_RG:-}" ]; then export TF_VAR_app_service_plan_resource_group_name="$_OPT_APP_PLAN_RG"; fi
           if [ -n "${_OPT_EXISTING_PLAN:-}" ]; then export TF_VAR_existing_plan_name="$_OPT_EXISTING_PLAN"; fi
           echo "terraform-app: TF_VAR_use_existing_plan=${TF_VAR_use_existing_plan}"
@@ -215,11 +240,23 @@ jobs:
       # --- Frontend Web App image tag (terraform-frontend) ---
       - name: Terraform init (frontend)
         working-directory: ${{ env.TF_FRONTEND_DIR }}
-        run: terraform init -input=false
+        env:
+          ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+        run: |
+          export ARM_OIDC_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+          export ARM_OIDC_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
+          terraform init -input=false
 
       - name: Terraform apply (frontend Web App image tag)
         working-directory: ${{ env.TF_FRONTEND_DIR }}
         env:
+          ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
           TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP_NAME }}
           TF_VAR_acr_name: ${{ vars.AZURE_ACR_NAME }}
           TF_VAR_frontend_enabled: ${{ vars.TF_VAR_FRONTEND_ENABLED || 'true' }}
@@ -235,6 +272,8 @@ jobs:
           _OPT_EXISTING_PLAN: ${{ vars.TF_VAR_EXISTING_PLAN_NAME || secrets.TF_VAR_EXISTING_PLAN_NAME }}
         run: |
           set -euo pipefail
+          export ARM_OIDC_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+          export ARM_OIDC_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
           PLAN_RG="${_OPT_FRONTEND_PLAN_RG:-}"
           if [ -z "$PLAN_RG" ]; then PLAN_RG="${_OPT_APP_PLAN_RG:-}"; fi
           if [ -n "$PLAN_RG" ]; then export TF_VAR_app_service_plan_resource_group_name="$PLAN_RG"; fi

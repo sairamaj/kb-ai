@@ -1,6 +1,13 @@
 terraform {
   required_version = ">= 1.5.0"
 
+  backend "azurerm" {
+    resource_group_name  = "promptkb-rg"
+    storage_account_name = "promptkb"
+    container_name       = "tfstate"
+    key                  = "terraform-app.tfstate"
+  }
+
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
