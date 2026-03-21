@@ -400,6 +400,25 @@ Workflow: [`.github/workflows/ci-cd-deploy.yml`](../.github/workflows/ci-cd-depl
 - Optionally set **`DEPLOY_SMOKE_FRONTEND_URL`** to also run `./scripts/run-deployed-e2e-tests.sh`.
 - On **workflow_dispatch**, uncheck **run_post_deploy_smoke** to skip smoke (e.g. first deploy before URLs exist).
 
+**Pipeline gates and post-deploy smoke (Z4-13)**
+
+| Job | When it runs | What it runs | Blocks deploy / rollout |
+|-----|----------------|--------------|-------------------------|
+| **test** | Every PR to `main` and every push that triggers the workflow | **Preflight:** [`scripts/run-ci-preflight.sh`](../scripts/run-ci-preflight.sh) / [`scripts/run-ci-preflight.ps1`](../scripts/run-ci-preflight.ps1) (install `backend/requirements.txt`, import `app.main`; `frontend` `npm ci` + `npm run build`). **Phase 1:** [`scripts/run-integration-tests.sh`](../scripts/run-integration-tests.sh) (Z4-03, Docker). | Yes: **deploy** and **post-deploy-smoke** depend on this job; if **test** fails, nothing is pushed or applied. |
+| **deploy** | Push to `main` / `feature/deployment` or **workflow_dispatch**, only when **`CI_CD_DEPLOY_ENABLED`** is `true` | Terraform ACR → build/push images → **Z4-05** (`scripts/verify-acr-images.sh`, Phase 2) → Terraform **terraform-app** + **terraform-frontend** with the new image tag. | N/A (this is the rollout). |
+| **post-deploy-smoke** | After **deploy** succeeds, if **`DEPLOY_SMOKE_BACKEND_URL`** is set (and smoke not disabled on manual runs) | Phase 3: `./scripts/run-deployed-backend-tests.sh`. Phase 4 (optional): `./scripts/run-deployed-e2e-tests.sh` if **`DEPLOY_SMOKE_FRONTEND_URL`** is set. | By default **yes** (job failure fails the workflow). Set **`DEPLOY_SMOKE_NON_BLOCKING`** to `true` for warn-only smoke (job uses `continue-on-error`). |
+
+**Configure deploy vs smoke**
+
+- **Tests only (no push / no Terraform):** open a **pull request** to `main`, or push while **`CI_CD_DEPLOY_ENABLED`** is not `true` (the **deploy** job is skipped; **test** still runs on PRs and on pushes that trigger Z4-11).
+- **Full pipeline including smoke:** enable **`CI_CD_DEPLOY_ENABLED`**, set **`DEPLOY_SMOKE_BACKEND_URL`** (and optionally **`DEPLOY_SMOKE_FRONTEND_URL`**), push or run **workflow_dispatch** with **run_post_deploy_smoke** checked.
+- **Deploy without post-deploy smoke:** use **workflow_dispatch** and uncheck **run_post_deploy_smoke**, or clear **`DEPLOY_SMOKE_BACKEND_URL`** (smoke job is skipped when the backend URL variable is empty).
+
+| Variable | Purpose |
+|----------|---------|
+| **`DEPLOY_SMOKE_NON_BLOCKING`** | `true`: post-deploy smoke failures do not fail the workflow (job uses `continue-on-error`). Toggle off again when smoke should block. |
+| **`DEPLOY_SMOKE_WARMUP_SECONDS`** | Optional non-negative integer: seconds to wait after deploy before smoke (helps App Service image pull / cold start). |
+
 **Staging vs production**
 
 - Use GitHub **Environments** named `staging` and `production`. On manual runs, choose **target_environment** so production can use **required reviewers** while staging deploys automatically.
@@ -566,7 +585,7 @@ Tests live in `tests/deployment/test_deployed_frontend_e2e.py` (marker **`deploy
 |--------------|-------------|
 | **Phase 1 — Container images (Z4-03)** | Run `.\scripts\run-integration-tests.ps1` from repo root. Builds prod images, starts backend + frontend + test DB, runs pytest against `http://localhost:8010` and `http://localhost:8081`, tears down. Requires Docker, Docker Compose, Python (pytest, httpx). |
 | **Phase 2 — ACR image availability (Z4-05)** | After pushing to ACR: `.\scripts\verify-acr-images.ps1 -AcrName <acr> -ImageTag <tag>`. Confirms `promptkb-api` and `promptkb-web` exist in ACR with the given tag. Requires Azure CLI and `az acr login`. In CI: Z4-04 and Z4-11 workflows run this after push. |
-| **Phase 5 — CI/CD (Z4-11)** | Enable `CI_CD_DEPLOY_ENABLED`, add `TF_VAR_*` secrets, then push to `main` / `feature/deployment` or run **Z4-11 - CI/CD** from Actions. See section *CI/CD pipeline — Z4-11* above. |
+| **Phase 5 — CI/CD (Z4-11 / Z4-13)** | Enable `CI_CD_DEPLOY_ENABLED`, add `TF_VAR_*` secrets, then push to `main` / `feature/deployment` or run **Z4-11 - CI/CD** from Actions. Preflight + Phase 1 gates run in **test**; Phase 2 (Z4-05) after push in **deploy**; post-deploy smoke (Z4-08 / Z4-10) in **post-deploy-smoke** when URLs are set. See *CI/CD pipeline — Z4-11* and *Pipeline gates and post-deploy smoke (Z4-13)* above. |
 | **Phase 3 — Deployed backend smoke (Z4-08)** | Set `TEST_BACKEND_URL` (or `BACKEND_URL`) to the deployed API origin, then `python -m pytest tests/deployment/ -v -m deployment` or `.\scripts\run-deployed-backend-tests.ps1` / `./scripts/run-deployed-backend-tests.sh`. Asserts `/health` is 200 and `/auth/me` without cookie is 401/403. No Docker required. |
 | **Phase 4 — Deployed frontend + E2E smoke (Z4-10)** | Set `TEST_FRONTEND_URL` (or `FRONTEND_URL`) and `TEST_BACKEND_URL` (or `BACKEND_URL`), then `python -m pytest tests/deployment/ -v -m deployment_e2e` or `.\scripts\run-deployed-e2e-tests.ps1` / `./scripts/run-deployed-e2e-tests.sh`. Asserts frontend `/` and `/feed` serve the SPA and backend `/health` is 200. No Docker required. Optional in CI. |
 | **Phase 3 — Manual health (Z4-06)** | Quick check: `curl https://<backend-app-name>.azurewebsites.net/health` returns 200 with `{"status":"ok","db":"ok"}` when DB is reachable. |

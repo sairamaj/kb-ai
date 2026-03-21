@@ -379,6 +379,12 @@ Use prefix **Z4-** (e.g. Z4-01, Z4-02). Stories are ordered by phase and depende
 - Given a successful deploy to the target environment, when post-deploy smoke is enabled, then Phase 3 (and optionally Phase 4) tests run against the deployed backend (and frontend) and pass for the pipeline to be considered successful (or clearly report failure).
 - Document which pipeline jobs run which tests and how to configure deploy vs smoke-only runs.
 
+#### Implementation notes (Z4-13)
+
+- **Workflow:** [`.github/workflows/ci-cd-deploy.yml`](../.github/workflows/ci-cd-deploy.yml) — **test** job runs [`scripts/run-ci-preflight.sh`](../scripts/run-ci-preflight.sh) then Phase 1 (Z4-03); **deploy** runs Z4-05 after push; **post-deploy-smoke** runs Z4-08 / optional Z4-10. **`DEPLOY_SMOKE_NON_BLOCKING`** makes smoke non-failing; **`DEPLOY_SMOKE_WARMUP_SECONDS`** optional wait before smoke.
+- **Z4-04** ([`build-and-push-acr.yml`](../.github/workflows/build-and-push-acr.yml)): when it runs (ACR-only path), a **test** job with the same preflight + Phase 1 gates runs before **build-and-push**.
+- **Docs:** [docs/developer.md](developer.md) — *Pipeline gates and post-deploy smoke (Z4-13)*.
+
 ---
 
 ## Phase 6 — Staging, rollback, and operations
