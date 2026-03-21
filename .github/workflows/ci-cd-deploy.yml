@@ -176,6 +176,9 @@ jobs:
         working-directory: ${{ env.TF_APP_DIR }}
         run: terraform init -input=false
 
+      # TF_VAR_USE_EXISTING_PLAN / plan name / plan RG must be Actions *Variables* (vars.*) for
+      # TF_VAR_use_existing_plan to see them. If you mistakenly added them as Secrets, we also
+      # read secrets.TF_VAR_* below so deploy still works.
       - name: Terraform apply (backend Web App image tag)
         working-directory: ${{ env.TF_APP_DIR }}
         env:
@@ -184,7 +187,7 @@ jobs:
           TF_VAR_backend_enabled: ${{ vars.TF_VAR_BACKEND_ENABLED || 'true' }}
           TF_VAR_backend_app_name: ${{ vars.TF_VAR_BACKEND_APP_NAME || 'promptkb-api' }}
           TF_VAR_backend_image_tag: ${{ steps.tag.outputs.value }}
-          TF_VAR_use_existing_plan: ${{ vars.TF_VAR_USE_EXISTING_PLAN || 'false' }}
+          TF_VAR_use_existing_plan: ${{ vars.TF_VAR_USE_EXISTING_PLAN || secrets.TF_VAR_USE_EXISTING_PLAN || 'false' }}
           TF_VAR_plan_name: ${{ vars.TF_VAR_PLAN_NAME || 'promptkb-plan' }}
           TF_VAR_database_url: ${{ secrets.TF_VAR_DATABASE_URL }}
           TF_VAR_secret_key: ${{ secrets.TF_VAR_SECRET_KEY }}
@@ -196,12 +199,17 @@ jobs:
           TF_VAR_github_client_secret: ${{ secrets.TF_VAR_GITHUB_CLIENT_SECRET }}
           TF_VAR_redirect_base_url: ${{ vars.TF_VAR_REDIRECT_BASE_URL || vars.BACKEND_PUBLIC_URL || 'https://promptkb-api.azurewebsites.net' }}
           TF_VAR_frontend_url: ${{ vars.TF_VAR_FRONTEND_URL || vars.FRONTEND_PUBLIC_URL || 'https://promptkb.azurewebsites.net' }}
-          _OPT_APP_PLAN_RG: ${{ vars.TF_VAR_APP_SERVICE_PLAN_RG }}
-          _OPT_EXISTING_PLAN: ${{ vars.TF_VAR_EXISTING_PLAN_NAME }}
+          _OPT_APP_PLAN_RG: ${{ vars.TF_VAR_APP_SERVICE_PLAN_RG || secrets.TF_VAR_APP_SERVICE_PLAN_RG }}
+          _OPT_EXISTING_PLAN: ${{ vars.TF_VAR_EXISTING_PLAN_NAME || secrets.TF_VAR_EXISTING_PLAN_NAME }}
         run: |
           set -euo pipefail
           if [ -n "${_OPT_APP_PLAN_RG:-}" ]; then export TF_VAR_app_service_plan_resource_group_name="$_OPT_APP_PLAN_RG"; fi
           if [ -n "${_OPT_EXISTING_PLAN:-}" ]; then export TF_VAR_existing_plan_name="$_OPT_EXISTING_PLAN"; fi
+          echo "terraform-app: TF_VAR_use_existing_plan=${TF_VAR_use_existing_plan}"
+          if [ "${TF_VAR_use_existing_plan}" = "true" ] && [ -z "${TF_VAR_existing_plan_name:-}" ]; then
+            echo "::error::TF_VAR_use_existing_plan is true but TF_VAR_existing_plan_name is empty. Set repo variable TF_VAR_EXISTING_PLAN_NAME (or secret TF_VAR_EXISTING_PLAN_NAME)."
+            exit 1
+          fi
           terraform apply -auto-approve -input=false
 
       # --- Frontend Web App image tag (terraform-frontend) ---
@@ -217,14 +225,14 @@ jobs:
           TF_VAR_frontend_enabled: ${{ vars.TF_VAR_FRONTEND_ENABLED || 'true' }}
           TF_VAR_frontend_app_name: ${{ vars.TF_VAR_FRONTEND_APP_NAME || 'promptkb' }}
           TF_VAR_frontend_image_tag: ${{ steps.tag.outputs.value }}
-          TF_VAR_use_existing_plan: ${{ vars.TF_VAR_FRONTEND_USE_EXISTING_PLAN || vars.TF_VAR_USE_EXISTING_PLAN || 'false' }}
+          TF_VAR_use_existing_plan: ${{ vars.TF_VAR_FRONTEND_USE_EXISTING_PLAN || vars.TF_VAR_USE_EXISTING_PLAN || secrets.TF_VAR_FRONTEND_USE_EXISTING_PLAN || secrets.TF_VAR_USE_EXISTING_PLAN || 'false' }}
           TF_VAR_plan_name: ${{ vars.TF_VAR_FRONTEND_PLAN_NAME || 'promptkb-frontend-plan' }}
           TF_VAR_plan_sku_name: ${{ vars.TF_VAR_FRONTEND_PLAN_SKU || 'B1' }}
           TF_VAR_backend_api_public_url: ${{ vars.BACKEND_PUBLIC_URL || 'https://promptkb-api.azurewebsites.net' }}
-          _OPT_FRONTEND_PLAN_RG: ${{ vars.TF_VAR_FRONTEND_APP_SERVICE_PLAN_RG }}
-          _OPT_APP_PLAN_RG: ${{ vars.TF_VAR_APP_SERVICE_PLAN_RG }}
-          _OPT_FRONTEND_EXISTING_PLAN: ${{ vars.TF_VAR_FRONTEND_EXISTING_PLAN_NAME }}
-          _OPT_EXISTING_PLAN: ${{ vars.TF_VAR_EXISTING_PLAN_NAME }}
+          _OPT_FRONTEND_PLAN_RG: ${{ vars.TF_VAR_FRONTEND_APP_SERVICE_PLAN_RG || secrets.TF_VAR_FRONTEND_APP_SERVICE_PLAN_RG }}
+          _OPT_APP_PLAN_RG: ${{ vars.TF_VAR_APP_SERVICE_PLAN_RG || secrets.TF_VAR_APP_SERVICE_PLAN_RG }}
+          _OPT_FRONTEND_EXISTING_PLAN: ${{ vars.TF_VAR_FRONTEND_EXISTING_PLAN_NAME || secrets.TF_VAR_FRONTEND_EXISTING_PLAN_NAME }}
+          _OPT_EXISTING_PLAN: ${{ vars.TF_VAR_EXISTING_PLAN_NAME || secrets.TF_VAR_EXISTING_PLAN_NAME }}
         run: |
           set -euo pipefail
           PLAN_RG="${_OPT_FRONTEND_PLAN_RG:-}"
@@ -233,6 +241,11 @@ jobs:
           EXIST="${_OPT_FRONTEND_EXISTING_PLAN:-}"
           if [ -z "$EXIST" ]; then EXIST="${_OPT_EXISTING_PLAN:-}"; fi
           if [ -n "$EXIST" ]; then export TF_VAR_existing_plan_name="$EXIST"; fi
+          echo "terraform-frontend: TF_VAR_use_existing_plan=${TF_VAR_use_existing_plan}"
+          if [ "${TF_VAR_use_existing_plan}" = "true" ] && [ -z "${TF_VAR_existing_plan_name:-}" ]; then
+            echo "::error::TF_VAR_use_existing_plan is true but TF_VAR_existing_plan_name is empty. Set TF_VAR_FRONTEND_EXISTING_PLAN_NAME or TF_VAR_EXISTING_PLAN_NAME (vars or secrets)."
+            exit 1
+          fi
           terraform apply -auto-approve -input=false
 
   post-deploy-smoke:
