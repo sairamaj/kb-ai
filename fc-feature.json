@@ -1,0 +1,1 @@
+{"name":"github-actions-feature-deployment","issuer":"https://token.actions.githubusercontent.com","subject":"repo:sairamaj/kb-ai:ref:refs/heads/feature/deployment","audiences":["api://AzureADTokenExchange"],"description":"GitHub Actions feature/deployment branch"}

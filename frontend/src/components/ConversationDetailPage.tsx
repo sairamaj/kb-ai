@@ -9,6 +9,7 @@ import { UsageDisplay } from './UsageDisplay'
 import { ConversationDetail, UpdateConversationPayload } from '../types/conversation'
 import type { CollectionSummary } from '../types/collection'
 import { Message } from '../types/chat'
+import { getApiUrl } from '../api/base'
 
 interface Props {
   id: string
@@ -80,7 +81,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
     if (!conv) return
     setExporting(true)
     try {
-      const res = await fetch(`/api/conversations/${id}/export?format=md`, { credentials: 'include' })
+      const res = await fetch(getApiUrl(`conversations/${id}/export?format=md`), { credentials: 'include' })
       if (!res.ok) throw new Error(`Export failed (${res.status})`)
       const blob = await res.blob()
       const disposition = res.headers.get('Content-Disposition')
@@ -112,7 +113,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
   useEffect(() => {
     setIsLoading(true)
     setLoadError(null)
-    fetch(`/api/conversations/${id}`, { credentials: 'include' })
+    fetch(getApiUrl(`conversations/${id}`), { credentials: 'include' })
       .then((res) => {
         if (!res.ok) throw new Error(`Failed to load conversation (${res.status})`)
         return res.json() as Promise<ConversationDetail>
@@ -128,7 +129,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
   }, [id])
 
   useEffect(() => {
-    fetch('/api/collections', { credentials: 'include' })
+    fetch(getApiUrl('collections'), { credentials: 'include' })
       .then((r) => (r.ok ? (r.json() as Promise<CollectionSummary[]>) : []))
       .then(setCollections)
       .catch(() => undefined)
@@ -145,7 +146,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
   async function patch(updates: UpdateConversationPayload, fieldLabel: string) {
     setPatchError(null)
     try {
-      const res = await fetch(`/api/conversations/${id}`, {
+      const res = await fetch(getApiUrl(`conversations/${id}`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -246,14 +247,14 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
     if (!conv || collectionAction) return
     setCollectionAction({ collectionId })
     try {
-      const res = await fetch(`/api/collections/${collectionId}/conversations`, {
+      const res = await fetch(getApiUrl(`collections/${collectionId}/conversations`), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversation_id: id }),
       })
       if (!res.ok) throw new Error('Failed to add')
-      const updated = (await fetch(`/api/conversations/${id}`, { credentials: 'include' }).then((r) => r.json())) as ConversationDetail
+      const updated = (await fetch(getApiUrl(`conversations/${id}`), { credentials: 'include' }).then((r) => r.json())) as ConversationDetail
       setConv(updated)
     } finally {
       setCollectionAction(null)
@@ -264,12 +265,12 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
     if (!conv || collectionAction) return
     setCollectionAction({ collectionId })
     try {
-      const res = await fetch(`/api/collections/${collectionId}/conversations/${id}`, {
+      const res = await fetch(getApiUrl(`collections/${collectionId}/conversations/${id}`), {
         method: 'DELETE',
         credentials: 'include',
       })
       if (!res.ok) throw new Error('Failed to remove')
-      const updated = (await fetch(`/api/conversations/${id}`, { credentials: 'include' }).then((r) => r.json())) as ConversationDetail
+      const updated = (await fetch(getApiUrl(`conversations/${id}`), { credentials: 'include' }).then((r) => r.json())) as ConversationDetail
       setConv(updated)
     } finally {
       setCollectionAction(null)
@@ -280,7 +281,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
     setIsDeleting(true)
     setDeleteError(null)
     try {
-      const res = await fetch(`/api/conversations/${id}`, {
+      const res = await fetch(getApiUrl(`conversations/${id}`), {
         method: 'DELETE',
         credentials: 'include',
       })

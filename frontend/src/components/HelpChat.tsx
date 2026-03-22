@@ -7,6 +7,7 @@ import { MessageBubble } from './MessageBubble'
 import { ChatInput } from './ChatInput'
 import { TypingIndicator } from './TypingIndicator'
 import type { Message } from '../types/chat'
+import { getApiUrl } from '../api/base'
 
 function nextId(): string {
   return `help-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
@@ -78,7 +79,7 @@ export function HelpChat() {
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }))
-      const res = await fetch('/api/help/chat', {
+      const res = await fetch(getApiUrl('help/chat'), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },

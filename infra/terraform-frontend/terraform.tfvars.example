@@ -1,0 +1,18 @@
+# Copy to terraform.tfvars. Do not commit secrets.
+resource_group_name = "promptkb-rg"
+acr_name            = "promptkbacrprod"
+
+# Optional: plan in another RG (e.g. test environment)
+# app_service_plan_resource_group_name = "promptkb-test-plans-rg"
+
+# Z4-09 — Frontend Web App
+frontend_enabled       = false
+frontend_app_name    = "promptkb"
+frontend_image_tag   = "latest"
+plan_name            = "promptkb-frontend-plan"
+plan_sku_name        = "B1"
+use_existing_plan    = false
+existing_plan_name   = ""
+
+# Backend URL: bake the same value into the image (docker build --build-arg VITE_API_BASE_URL=...)
+backend_api_public_url = "https://promptkb-api.azurewebsites.net"

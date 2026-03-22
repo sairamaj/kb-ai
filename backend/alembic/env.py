@@ -21,8 +21,14 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://kb_user:kb_password@db:5432/kb_db",
 )
+# Alembic uses Python's configparser internally, which performs '%' interpolation by default.
+# Our SQLAlchemy connection URL contains percent-encoded sequences like '%40' / '%23' in
+# the user/password portion, which configparser treats as interpolation and errors out.
+# Escape '%' so Alembic's configparser accepts it; Alembic/configparser will unescape
+# when retrieving the option for SQLAlchemy.
+DATABASE_URL_FOR_ALEMBIC = DATABASE_URL.replace("%", "%%")
 # Alembic needs a sync URL for some operations; asyncpg is fine for async migrations
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+config.set_main_option("sqlalchemy.url", DATABASE_URL_FOR_ALEMBIC)
 
 
 def run_migrations_offline() -> None:

@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars in this directory. Do not commit terraform.tfvars.
+#
+# Minimal example for provisioning Azure Database for PostgreSQL Flexible Server
+# for PromptKB. See docs/setup_PostGreSql.md for detailed guidance.
+
+resource_group_name = "promptkb-rg"
+
+# Required before apply:
+# - Set a strong pg_admin_password
+# - Configure at least one firewall rule that allows your IP / app
+
+pg_admin_password = "CHANGE-ME-STRONG-PASSWORD"
+
+pg_firewall_rules = {
+  "allow-my-ip" = {
+    start_ip = "1.2.3.4"
+    end_ip   = "1.2.3.4"
+  }
+}
+

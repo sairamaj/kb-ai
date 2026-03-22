@@ -82,6 +82,138 @@ When the schema changes (e.g. after pulling new code or adding a migration), app
 - Create a new migration: `cd backend && alembic revision -m "describe change"`
 - Rollback one migration: `cd backend && alembic downgrade -1`
 
+### Production backend image (Z4-01)
+
+The backend Dockerfile is multi-stage. Use the **production** image (no `--reload`) for deployment (e.g. Azure App Service).
+
+- **Build production image** (from repo root):
+  ```bash
+  docker build --target prod -t promptkb-api ./backend
+  ```
+  Omitting `--target prod` also builds the production stage (it is the default).
+
+- **Run production container** (requires a running PostgreSQL and env):
+  ```bash
+  docker run --rm -p 8000:8000 \
+    -e DATABASE_URL="postgresql+asyncpg://user:pass@host:5432/dbname" \
+    -e SECRET_KEY="your-secret" \
+    -e OPENAI_API_KEY="sk-..." \
+    promptkb-api
+  ```
+  The container runs `alembic upgrade head` then `uvicorn app.main:app --host 0.0.0.0 --port 8000` (no reload). File changes on the host do not trigger restarts.
+
+- **Health and readiness:** `GET http://<container>:8000/health` returns HTTP 200 with `{"status": "ok", "db": "ok"}` when the app and database are healthy, or HTTP 503 with `{"status": "degraded", "db": "error"}` when the database is unreachable. Use this for platform health/readiness probes.
+
+- **Development image** (with `--reload`): `docker-compose` builds the backend with `target: dev`. To build the dev image manually: `docker build --target dev -t promptkb-api:dev ./backend`.
+
+**How to test the production backend image locally**
+
+1. **Start a database** (e.g. `docker-compose up -d db` from repo root).
+2. **Build the production image:**  
+   `docker build --target prod -t promptkb-api ./backend`
+3. **Run the container** with the same `DATABASE_URL` as your running DB (e.g. if using compose's `db` service, use `postgresql+asyncpg://kb_user:kb_password@host.docker.internal:5432/kb_db` on Docker Desktop, or run the backend on the same Docker network as `db` and use `postgresql+asyncpg://kb_user:kb_password@db:5432/kb_db`).
+4. **Check health:**  
+   `curl http://localhost:8000/health`  
+   Expect HTTP 200 and `{"status":"ok","db":"ok"}` when the DB is reachable. If the DB is down or unreachable, expect HTTP 503 and `{"status":"degraded","db":"error"}`.
+5. **Confirm no reload:** Change a file in `backend/` (e.g. add a comment in `main.py`) and confirm the running container does **not** restart or reload.
+
+Example (backend on same network as compose `db`; replace `kb_default` with your project’s network name from `docker network ls` if different):
+
+```bash
+docker build --target prod -t promptkb-api ./backend
+docker run --rm -p 8000:8000 --network kb_default \
+  -e DATABASE_URL=postgresql+asyncpg://kb_user:kb_password@db:5432/kb_db \
+  -e SECRET_KEY=test-secret \
+  promptkb-api
+```
+
+Then in another terminal: `curl http://localhost:8000/health`.
+
+### Production frontend image (Z4-02)
+
+The frontend Dockerfile is multi-stage. Use the **production** image (static build served by nginx, no Vite dev server) for deployment (e.g. Azure App Service).
+
+- **Build production image** (from repo root):
+  ```bash
+  docker build --target prod -t promptkb-web ./frontend
+  ```
+  To point the app at your backend API at build time (required when frontend and backend are on different origins):
+  ```bash
+  docker build --target prod --build-arg VITE_API_BASE_URL=https://promptkb-api.azurewebsites.net -t promptkb-web ./frontend
+  ```
+  Omitting `--target prod` also builds the production stage (it is the default).
+
+- **Run production container:**
+  ```bash
+  docker run --rm -p 8080:8080 promptkb-web
+  ```
+  The container serves the SPA on port 8080. Open `http://localhost:8080/`. API calls from the browser use the backend URL set at build time via `VITE_API_BASE_URL`, or the dev proxy path `/api` if not set (suitable only when frontend is proxied to the same backend).
+
+- **Acceptance:** `GET http://<container>:8080/` returns HTTP 200 and the app loads; requests to the API use the configured backend base URL when `VITE_API_BASE_URL` was set at build.
+
+- **Development image** (Vite dev server): `docker-compose` builds the frontend with `target: dev`. To build the dev image manually: `docker build --target dev -t promptkb-web:dev ./frontend`.
+
+**How to test the production frontend image locally**
+
+1. **Build the production image** with your backend URL (e.g. a running backend on localhost or a stack):
+   ```bash
+  docker build --target prod --build-arg VITE_API_BASE_URL=http://localhost:8000 -t promptkb-web ./frontend
+  ```
+2. **Run the container:**  
+   `docker run --rm -p 8080:8080 promptkb-web`
+3. **Open** `http://localhost:8080/` and confirm the app loads and can reach the backend (e.g. sign-in or health).
+
+### Phase 1 integration tests: container images (Z4-03)
+
+Integration tests verify that the production backend and frontend images run correctly (e.g. before pushing to a registry). They build the prod images, start them with a test database, and assert on HTTP responses.
+
+**Requirements:** Docker, Docker Compose, Python 3 with pytest and httpx.
+
+**Option 1 — One command (recommended on Windows):** From the repo root, run the script that builds the stack, runs tests, and tears down:
+
+```powershell
+.\scripts\run-integration-tests.ps1
+```
+
+**Option 2 — Manual steps:**
+
+1. **Install test dependencies** (once):  
+   `pip install -r tests/deployment/requirements.txt`
+
+2. **Start the integration stack** (production images + test DB; backend 8010, frontend 8081):  
+   `docker compose -f docker-compose.integration.yml up -d --build`  
+   Wait until the backend and frontend are up (e.g. `curl http://localhost:8010/health` returns 200).
+
+3. **Run the tests** (integration stack uses ports 8010 and 8081 to avoid clashing with dev):  
+   `$env:BACKEND_URL="http://localhost:8010"; $env:FRONTEND_URL="http://localhost:8081"; python -m pytest tests/deployment/ -v -m integration`
+
+4. **Tear down:**  
+   `docker compose -f docker-compose.integration.yml down`
+
+**What is tested:** Backend `GET /health` returns 200 with `{"status":"ok","db":"ok"}`; frontend `GET /` returns 200 and the response contains the app (title "Prompt KB" and root div). The integration stack uses a dedicated test database (DB on host port 5433, backend 8010, frontend 8081) so it can run alongside a dev stack. See [docs/developer.md](docs/developer.md) and [docs/deployment_stories.md](docs/deployment_stories.md) (Z4-03).
+
+### Phase 3 integration tests: deployed backend (Z4-08)
+
+Smoke tests against a **live** backend URL (staging or post-deploy). Set `TEST_BACKEND_URL` (recommended) or `BACKEND_URL` to the API origin, then:
+
+```powershell
+python -m pytest tests/deployment/ -v -m deployment
+```
+
+Or: `.\scripts\run-deployed-backend-tests.ps1` (Windows) / `./scripts/run-deployed-backend-tests.sh` (bash). If neither env var is set, these tests are skipped. Full details: [docs/developer.md](docs/developer.md) (Phase 3 integration tests — deployed backend).
+
+### Phase 4 integration tests: deployed frontend and E2E smoke (Z4-10)
+
+After both Web Apps are deployed, smoke the **live** frontend and backend together (HTTP only; no browser automation).
+
+Set **`TEST_FRONTEND_URL`** (or `FRONTEND_URL`) and **`TEST_BACKEND_URL`** (or `BACKEND_URL`), then:
+
+```powershell
+python -m pytest tests/deployment/ -v -m deployment_e2e
+```
+
+Or: `.\scripts\run-deployed-e2e-tests.ps1` / `./scripts/run-deployed-e2e-tests.sh`. If the required URLs for a given test are unset, that test is skipped. Full details: [docs/developer.md](docs/developer.md) (Phase 4 — Z4-10).
+
 ### Build and lint (frontend)
 
 ```bash

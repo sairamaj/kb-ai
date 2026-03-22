@@ -1,0 +1,34 @@
+# Copy to terraform.tfvars in this directory. Do not commit terraform.tfvars.
+# Required:
+resource_group_name = "promptkb-rg"
+acr_name            = "promptkbacrprod"
+
+# When the App Service plan is in a different RG than ACR/Web App (e.g. shared plan):
+# app_service_plan_resource_group_name = "shared-plans-rg"
+# The Web App is still created in resource_group_name; its Azure *region* follows the
+# plan (required). If apply fails with "Cannot find serverFarm", check plan region vs RG region.
+
+# Z4-06 — Backend Web App (set backend_enabled = true to create)
+backend_enabled     = false
+backend_app_name    = "promptkb-api"
+backend_image_tag   = "latest" # Use commit SHA or version from build-and-push
+plan_name           = "promptkb-plan"
+use_existing_plan   = false
+existing_plan_name  = "existing-shared-plan-name"
+
+# Required when backend_enabled = true:
+database_url      = "postgresql+asyncpg://user:pass@host:5432/dbname"
+secret_key        = "generate-with-python-secrets-token-hex-32"
+redirect_base_url = "https://promptkb-api.azurewebsites.net"
+frontend_url      = "https://promptkb.azurewebsites.net"
+
+# Optional (OAuth, AI keys):
+openai_api_key       = ""
+gemini_api_key       = ""
+google_client_id     = ""
+google_client_secret = ""
+github_client_id     = ""
+github_client_secret = ""
+
+# PostgreSQL Flexible Server — set pg_admin_password and pg_firewall_rules before apply.
+# See docs/setup_PostGreSql.md.

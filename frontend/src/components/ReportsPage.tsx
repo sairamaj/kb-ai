@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext'
 import type { UserReportRow, ModelReportRow } from '../types/reports'
 import { USER_ROLE_LABELS } from '../types/auth'
 import { ThemeToggle } from './ThemeToggle'
+import { getApiUrl } from '../api/base'
 
 interface Props {
   onBack: () => void
@@ -20,7 +21,7 @@ async function fetchUserReport(): Promise<UserReportRow[]> {
 }
 
 async function fetchModelReport(): Promise<ModelReportRow[]> {
-  const res = await fetch('/api/admin/reports/models', { credentials: 'include' })
+  const res = await fetch(getApiUrl('admin/reports/models'), { credentials: 'include' })
   if (!res.ok) throw new Error(res.status === 403 ? 'Access denied' : `Failed to load report (${res.status})`)
   return res.json()
 }

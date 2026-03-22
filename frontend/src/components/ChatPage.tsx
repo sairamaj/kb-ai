@@ -12,6 +12,7 @@ import { TypingIndicator } from './TypingIndicator'
 import { SaveDialog } from './SaveDialog'
 import { ThemeToggle } from './ThemeToggle'
 import type { Message } from '../types/chat'
+import { getApiUrl } from '../api/base'
 
 type ProviderId = 'openai' | 'gemini'
 
@@ -146,7 +147,7 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, onOpenReports, ini
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch('/api/chat/options')
+        const res = await fetch(getApiUrl('chat/options'))
         if (!res.ok) return
         const data = (await res.json()) as { providers?: ProviderOption[] }
         if (!cancelled && data.providers && Array.isArray(data.providers) && data.providers.length > 0) {
@@ -226,7 +227,7 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, onOpenReports, ini
         visibility: 'private',
       }
 
-      const res = await fetch('/api/conversations', {
+      const res = await fetch(getApiUrl('conversations'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

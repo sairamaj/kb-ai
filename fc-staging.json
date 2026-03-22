@@ -1,0 +1,7 @@
+{
+  "name": "github-actions-env-staging",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:sairamaj/kb-ai:environment:staging",
+  "audiences": ["api://AzureADTokenExchange"],
+  "description": "GitHub Actions staging environment"
+}

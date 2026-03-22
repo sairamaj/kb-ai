@@ -22,3 +22,17 @@ dist/
 
 # Postgres volume
 postgres_data/
+
+# Terraform
+.terraform/
+terraform.tfvars
+*.auto.tfvars
+
+# Terraform state
+*.tfstate
+*.tfstate.backup
+*.tfstate.*
+
+# Terraform binaries
+terraform.exe
+Terraform.exe

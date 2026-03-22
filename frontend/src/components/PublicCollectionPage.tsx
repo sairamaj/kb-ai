@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FeedItem } from '../types/conversation'
 import type { PublicCollectionDetail } from '../types/collection'
 import { ThemeToggle } from './ThemeToggle'
+import { getApiUrl } from '../api/base'
 
 interface Props {
   id: string
@@ -113,7 +114,7 @@ export function PublicCollectionPage({
   useEffect(() => {
     setIsLoading(true)
     setError(null)
-    fetch(`/api/collections/${id}/public`)
+    fetch(getApiUrl(`collections/${id}/public`))
       .then(async (res) => {
         if (!res.ok) {
           setErrorStatus(res.status)
