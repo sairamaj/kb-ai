@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useChat, streamChatReply } from '../hooks/useChat'
+import { useChat, streamChatReply, messageFingerprint } from '../hooks/useChat'
 import { useAuth } from '../context/AuthContext'
 import { USER_ROLE_LABELS } from '../types/auth'
 import { UsageDisplay } from './UsageDisplay'
@@ -101,12 +101,23 @@ interface Props {
 
 export function ChatPage({ onOpenConversation, onOpenLibrary, onOpenReports, initialMessages, continuedFromTitle }: Props) {
   const queryClient = useQueryClient()
-  const { messages, addMessage, appendToLastAssistant, clearMessages, clearDraft, hasDraft } = useChat(initialMessages)
+  const {
+    messages,
+    addMessage,
+    appendToLastAssistant,
+    clearMessages,
+    clearDraft,
+    hasDraft,
+    draftSaveMeta,
+    setDraftSaveMeta,
+  } = useChat(initialMessages)
   const { user, logout } = useAuth()
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [limitReached, setLimitReached] = useState<{ message: string; resource: 'conversation' | 'collection' } | null>(null)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [saveDialogDefaults, setSaveDialogDefaults] = useState({ title: '', tags: [] as string[] })
+  const [saveSuggestionsLoading, setSaveSuggestionsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [savedConversationId, setSavedConversationId] = useState<string | null>(null)
@@ -202,12 +213,55 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, onOpenReports, ini
     setShowContinueBanner(false)
   }
 
-  const defaultTitle = (() => {
+  const fallbackTitle = useMemo(() => {
     const first = messages.find((m) => m.role === 'user')
     if (!first) return ''
     const t = first.content.slice(0, 80).trim()
     return first.content.length > 80 ? t + '…' : t
-  })()
+  }, [messages])
+
+  async function openSaveDialog() {
+    setSaveSuccess(false)
+    const fp = messageFingerprint(messages)
+    const payloadMessages = messages
+      .filter((m) => m.content.trim() && (m.role === 'user' || m.role === 'assistant'))
+      .map((m) => ({ role: m.role, content: m.content }))
+
+    if (draftSaveMeta && draftSaveMeta.fingerprint === fp) {
+      setSaveDialogDefaults({ title: draftSaveMeta.title, tags: draftSaveMeta.tags })
+      setSaveSuggestionsLoading(false)
+      setShowSaveDialog(true)
+      return
+    }
+
+    setShowSaveDialog(true)
+    setSaveSuggestionsLoading(true)
+    setSaveDialogDefaults({ title: fallbackTitle, tags: [] })
+
+    if (payloadMessages.length === 0) {
+      setSaveSuggestionsLoading(false)
+      return
+    }
+
+    try {
+      const res = await fetch(getApiUrl('conversations/suggest-save-metadata'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ messages: payloadMessages }),
+      })
+      if (!res.ok) {
+        throw new Error(await res.text())
+      }
+      const data = (await res.json()) as { title: string; tags: string[] }
+      setSaveDialogDefaults({ title: data.title, tags: data.tags })
+      setDraftSaveMeta({ title: data.title, tags: data.tags, fingerprint: fp })
+    } catch {
+      setSaveDialogDefaults({ title: fallbackTitle, tags: [] })
+    } finally {
+      setSaveSuggestionsLoading(false)
+    }
+  }
 
   async function handleSave(title: string, tags: string[]) {
     setIsSaving(true)
@@ -292,7 +346,7 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, onOpenReports, ini
           </button>
           {messages.length > 0 && !isStreaming && (
             <button
-              onClick={() => { setSaveSuccess(false); setShowSaveDialog(true) }}
+              onClick={() => void openSaveDialog()}
               className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 border border-indigo-300 dark:border-indigo-700 hover:border-indigo-400 dark:hover:border-indigo-500"
             >
               Save
@@ -532,10 +586,12 @@ export function ChatPage({ onOpenConversation, onOpenLibrary, onOpenReports, ini
 
       {showSaveDialog && (
         <SaveDialog
-          defaultTitle={defaultTitle}
+          defaultTitle={saveDialogDefaults.title}
+          defaultTags={saveDialogDefaults.tags}
           onSave={handleSave}
           onCancel={() => setShowSaveDialog(false)}
           isSaving={isSaving}
+          isLoadingSuggestions={saveSuggestionsLoading}
         />
       )}
       {limitReached && (

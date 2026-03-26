@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -14,7 +15,7 @@ from app.database import get_db
 from app.export_utils import conversation_to_markdown, sanitize_filename
 from app.limits import PRO_CONVERSATION_LIMIT, STARTER_CONVERSATION_LIMIT
 from app.models import Collection, Conversation, ConversationCollection, Message, MessageRole, User, UserRole, Visibility
-from app.openai_client import embed_text, has_openai_key
+from app.openai_client import embed_text, get_openai_client, has_openai_key
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -34,6 +35,21 @@ class SaveConversationRequest(BaseModel):
     messages: list[SaveMessageInput]
     model: str = "gpt-4o-mini"
     visibility: str = "private"
+
+
+class SuggestSaveMetadataRequest(BaseModel):
+    """User and assistant turns only (same shape as save payload, without system)."""
+
+    messages: list[SaveMessageInput]
+
+
+class SuggestSaveMetadataResponse(BaseModel):
+    title: str
+    tags: list[str]
+
+
+SUGGEST_SAVE_MODEL = "gpt-4o-mini"
+SUGGEST_TRANSCRIPT_MAX_CHARS = 16_000
 
 
 class ConversationResponse(BaseModel):
@@ -266,6 +282,83 @@ async def save_conversation(
         collection_ids=[],
         similarity=None,
     )
+
+
+@router.post("/suggest-save-metadata", response_model=SuggestSaveMetadataResponse)
+async def suggest_save_metadata(
+    body: SuggestSaveMetadataRequest,
+    _user: CurrentUser,
+) -> SuggestSaveMetadataResponse:
+    """Derive a short title and 3–5 topical tags from the chat transcript using OpenAI."""
+    if not has_openai_key():
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured")
+
+    msgs = [
+        m
+        for m in body.messages
+        if m.role in ("user", "assistant") and m.content.strip()
+    ]
+    if not msgs:
+        raise HTTPException(status_code=400, detail="No messages to summarize")
+
+    lines: list[str] = []
+    for m in msgs:
+        label = "User" if m.role == "user" else "Assistant"
+        lines.append(f"{label}: {m.content}")
+    transcript = "\n\n".join(lines)
+    if len(transcript) > SUGGEST_TRANSCRIPT_MAX_CHARS:
+        transcript = transcript[:SUGGEST_TRANSCRIPT_MAX_CHARS] + "\n…"
+
+    system_prompt = (
+        "You help users save chat conversations to a knowledge base.\n"
+        "Given the transcript, respond with a single JSON object only (no markdown fences) with:\n"
+        '- "title": a concise descriptive title, at most 80 characters, plain text, no newlines.\n'
+        '- "tags": an array of 3 to 5 short tags: lowercase, single words or hyphenated phrases '
+        "(no hashtags), describing main topics or technologies in the conversation.\n"
+        "If the chat is short, still infer a reasonable title and tags."
+    )
+
+    client = get_openai_client()
+    completion = await client.chat.completions.create(
+        model=SUGGEST_SAVE_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Transcript:\n\n{transcript}"},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.3,
+    )
+    raw = completion.choices[0].message.content or "{}"
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Invalid model response")
+
+    title = str(data.get("title", "")).strip().replace("\n", " ")
+    if len(title) > 200:
+        title = title[:200]
+
+    tags_raw = data.get("tags", [])
+    if not isinstance(tags_raw, list):
+        tags_raw = []
+    tags: list[str] = []
+    for item in tags_raw:
+        if len(tags) >= 5:
+            break
+        s = str(item).strip().lower().replace("#", "").replace(",", "")
+        if s:
+            tags.append(s)
+
+    if not title:
+        first_user = next((m.content for m in msgs if m.role == "user"), "")
+        if first_user.strip():
+            title = first_user.strip()[:80]
+            if len(first_user.strip()) > 80:
+                title += "…"
+        else:
+            title = "Untitled"
+
+    return SuggestSaveMetadataResponse(title=title, tags=tags)
 
 
 @router.get("/tags", response_model=list[str])
