@@ -43,11 +43,13 @@ FROM node:22-alpine AS dev
 
 WORKDIR /app
 
-COPY package.json .
+COPY package.json package-lock.json* ./
 RUN npm install
 
 COPY . .
 
 EXPOSE 5173
 
-CMD ["npm", "run", "dev"]
+# Bind mount ./frontend hides image files; /app/node_modules is a persistent volume.
+# Run install on each start so new dependencies (e.g. after package.json changes) are applied.
+CMD ["sh", "-c", "npm install && npm run dev"]
