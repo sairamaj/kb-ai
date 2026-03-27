@@ -6,9 +6,10 @@ import { ThemeToggle } from './ThemeToggle'
 import { UsageDisplay } from './UsageDisplay'
 import type { CollectionSummary, CreateCollectionPayload, UpdateCollectionPayload } from '../types/collection'
 import type { ConversationSummary } from '../types/conversation'
+import type { CreateLearningTopicPayload, LearningTopicListItem } from '../types/learningTopic'
 import { getApiUrl } from '../api/base'
 
-type LibraryView = 'conversations' | 'collections'
+type LibraryView = 'conversations' | 'collections' | 'learning-topics'
 type SortOption = 'recent' | 'oldest' | 'most_replayed'
 type SearchMode = 'keyword' | 'semantic'
 
@@ -78,6 +79,15 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [copiedCollectionId, setCopiedCollectionId] = useState<string | null>(null)
   const [exportingCollectionId, setExportingCollectionId] = useState<string | null>(null)
 
+  const [learningTopics, setLearningTopics] = useState<LearningTopicListItem[]>([])
+  const [learningTopicsLoading, setLearningTopicsLoading] = useState(false)
+  const [learningTopicsError, setLearningTopicsError] = useState<string | null>(null)
+  const [showCreateTopic, setShowCreateTopic] = useState(false)
+  const [createTopicTitle, setCreateTopicTitle] = useState('')
+  const [createTopicDescription, setCreateTopicDescription] = useState('')
+  const [isCreatingTopic, setIsCreatingTopic] = useState(false)
+  const [createTopicError, setCreateTopicError] = useState<string | null>(null)
+
   const [showDeleteAccount, setShowDeleteAccount] = useState(false)
   const [isDeletingAccount, setIsDeletingAccount] = useState(false)
   const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null)
@@ -138,6 +148,72 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         setCollectionsLoading(false)
       })
   }, [libraryView])
+
+  useEffect(() => {
+    if (libraryView !== 'learning-topics') return
+    setLearningTopicsLoading(true)
+    setLearningTopicsError(null)
+    fetch(getApiUrl('learning-topics'), { credentials: 'include' })
+      .then((r) => {
+        if (!r.ok) throw new Error(`Failed to load learning topics (${r.status})`)
+        return r.json() as Promise<LearningTopicListItem[]>
+      })
+      .then((data) => {
+        setLearningTopics(data)
+        setLearningTopicsLoading(false)
+      })
+      .catch((err: unknown) => {
+        setLearningTopicsError(err instanceof Error ? err.message : 'Failed to load learning topics.')
+        setLearningTopicsLoading(false)
+      })
+  }, [libraryView])
+
+  function parseApiErrorMessage(data: unknown, fallback: string): string {
+    const detail = (data as { detail?: unknown })?.detail
+    if (Array.isArray(detail)) {
+      return (
+        detail.map((e: { msg?: string }) => e.msg ?? '').filter(Boolean).join(', ') || fallback
+      )
+    }
+    if (typeof detail === 'string') return detail
+    return fallback
+  }
+
+  async function submitCreateTopic() {
+    const title = createTopicTitle.trim()
+    if (!title) {
+      setCreateTopicError('Title is required.')
+      return
+    }
+    setIsCreatingTopic(true)
+    setCreateTopicError(null)
+    try {
+      const desc = createTopicDescription.trim()
+      const body: CreateLearningTopicPayload = {
+        title,
+        ...(desc ? { description: desc } : {}),
+      }
+      const res = await fetch(getApiUrl('learning-topics'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(parseApiErrorMessage(data, `Create failed (${res.status})`))
+      }
+      const created = (await res.json()) as LearningTopicListItem
+      setLearningTopics((prev) => [created, ...prev])
+      setShowCreateTopic(false)
+      setCreateTopicTitle('')
+      setCreateTopicDescription('')
+    } catch (err) {
+      setCreateTopicError(err instanceof Error ? err.message : 'Create failed.')
+    } finally {
+      setIsCreatingTopic(false)
+    }
+  }
 
   async function submitCreateCollection() {
     const name = createCollectionName.trim()
@@ -422,6 +498,16 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
             }`}
           >
             Collections
+          </button>
+          <button
+            onClick={() => setLibraryView('learning-topics')}
+            className={`text-left px-4 py-2.5 text-sm font-medium transition-colors ${
+              libraryView === 'learning-topics'
+                ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 border-r-2 border-indigo-500'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
+            }`}
+          >
+            Learning topics
           </button>
         </nav>
 
@@ -972,6 +1058,81 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       </div>
       )}
 
+      {/* Learning topics view */}
+      {libraryView === 'learning-topics' && (
+      <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="max-w-3xl mx-auto space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Learning topics</h2>
+            <button
+              type="button"
+              onClick={() => {
+                setShowCreateTopic(true)
+                setCreateTopicError(null)
+                setCreateTopicTitle('')
+                setCreateTopicDescription('')
+              }}
+              className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+            >
+              New topic
+            </button>
+          </div>
+          {learningTopicsLoading ? (
+            <div className="flex justify-center py-16">
+              <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+            </div>
+          ) : learningTopicsError ? (
+            <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+              {learningTopicsError}
+            </div>
+          ) : learningTopics.length === 0 ? (
+            <div className="flex flex-col items-center py-16 gap-3">
+              <p className="text-gray-500 text-sm">No learning topics yet.</p>
+              <p className="text-xs text-gray-400 dark:text-gray-600 text-center max-w-sm">
+                Create a topic to organize related conversations for study and replay.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateTopic(true)
+                  setCreateTopicError(null)
+                  setCreateTopicTitle('')
+                  setCreateTopicDescription('')
+                }}
+                className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+              >
+                New topic
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-gray-400 dark:text-gray-600 mb-2">
+                {learningTopics.length} topic{learningTopics.length !== 1 ? 's' : ''}
+              </p>
+              {learningTopics.map((t) => (
+                <div
+                  key={t.id}
+                  className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3.5"
+                >
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{t.title}</p>
+                  {t.description && (
+                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">{t.description}</p>
+                  )}
+                  <div className="flex items-center gap-2 mt-2 flex-wrap text-xs text-gray-400 dark:text-gray-600">
+                    <span>
+                      {t.conversation_count} conversation{t.conversation_count !== 1 ? 's' : ''}
+                    </span>
+                    <span>·</span>
+                    <span>Updated {formatDate(t.updated_at)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      )}
+
       {/* Create collection modal */}
       {showCreateCollection && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -1050,6 +1211,76 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
               >
                 {isCreatingCollection && (
+                  <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                )}
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create learning topic modal */}
+      {showCreateTopic && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl flex flex-col gap-4">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">New learning topic</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Add a title and an optional description. You can add conversations to this topic in a later step.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="topic-title" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                  Title
+                </label>
+                <input
+                  id="topic-title"
+                  type="text"
+                  value={createTopicTitle}
+                  onChange={(e) => setCreateTopicTitle(e.target.value)}
+                  placeholder="e.g. Python asyncio"
+                  className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-indigo-500"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label htmlFor="topic-description" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                  Description <span className="font-normal text-gray-500">(optional)</span>
+                </label>
+                <textarea
+                  id="topic-description"
+                  value={createTopicDescription}
+                  onChange={(e) => setCreateTopicDescription(e.target.value)}
+                  placeholder="Notes or goals for this topic…"
+                  rows={3}
+                  className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 resize-y min-h-[4.5rem]"
+                />
+              </div>
+            </div>
+            {createTopicError && (
+              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                {createTopicError}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateTopic(false)
+                  setCreateTopicError(null)
+                }}
+                disabled={isCreatingTopic}
+                className="px-4 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitCreateTopic()}
+                disabled={isCreatingTopic}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isCreatingTopic && (
                   <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
                 )}
                 Create
