@@ -87,6 +87,9 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [createTopicDescription, setCreateTopicDescription] = useState('')
   const [isCreatingTopic, setIsCreatingTopic] = useState(false)
   const [createTopicError, setCreateTopicError] = useState<string | null>(null)
+  const [deleteTopicId, setDeleteTopicId] = useState<string | null>(null)
+  const [isDeletingTopic, setIsDeletingTopic] = useState(false)
+  const [deleteTopicError, setDeleteTopicError] = useState<string | null>(null)
 
   const [showDeleteAccount, setShowDeleteAccount] = useState(false)
   const [isDeletingAccount, setIsDeletingAccount] = useState(false)
@@ -212,6 +215,28 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       setCreateTopicError(err instanceof Error ? err.message : 'Create failed.')
     } finally {
       setIsCreatingTopic(false)
+    }
+  }
+
+  async function confirmDeleteTopic() {
+    if (!deleteTopicId) return
+    setIsDeletingTopic(true)
+    setDeleteTopicError(null)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${deleteTopicId}`), {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(parseApiErrorMessage(data, `Delete failed (${res.status})`))
+      }
+      setLearningTopics((prev) => prev.filter((t) => t.id !== deleteTopicId))
+      setDeleteTopicId(null)
+    } catch (err) {
+      setDeleteTopicError(err instanceof Error ? err.message : 'Delete failed.')
+    } finally {
+      setIsDeletingTopic(false)
     }
   }
 
@@ -681,6 +706,60 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         </div>
       )}
 
+      {/* Delete learning topic confirmation modal */}
+      {deleteTopicId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Delete learning topic?</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {(() => {
+                  const t = learningTopics.find((x) => x.id === deleteTopicId)
+                  return t ? (
+                    <>
+                      This removes{' '}
+                      <span className="text-gray-800 dark:text-gray-200 font-medium">"{t.title}"</span> and any links
+                      from this topic to conversations. Your conversations remain in the library.
+                    </>
+                  ) : (
+                    'This removes the topic and its links to conversations. Your conversations are not deleted.'
+                  )
+                })()}
+              </p>
+            </div>
+            {deleteTopicError && (
+              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                {deleteTopicError}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteTopicId(null)
+                  setDeleteTopicError(null)
+                }}
+                disabled={isDeletingTopic}
+                className="px-4 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => { void confirmDeleteTopic() }}
+                disabled={isDeletingTopic}
+                className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isDeletingTopic && (
+                  <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                )}
+                Delete topic
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete account confirmation modal */}
       {showDeleteAccount && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -1112,7 +1191,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
               {learningTopics.map((t) => (
                 <div
                   key={t.id}
-                  className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3.5"
+                  className="relative group bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3.5 pr-12"
                 >
                   <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{t.title}</p>
                   {t.description && (
@@ -1125,6 +1204,19 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                     <span>·</span>
                     <span>Updated {formatDate(t.updated_at)}</span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteTopicId(t.id)
+                      setDeleteTopicError(null)
+                    }}
+                    aria-label="Delete learning topic"
+                    className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-gray-400 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 </div>
               ))}
             </div>

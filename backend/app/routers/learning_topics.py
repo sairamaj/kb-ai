@@ -190,3 +190,28 @@ async def get_learning_topic(
             for membership, conversation in membership_rows
         ],
     )
+
+
+@router.delete("/{topic_id}", status_code=204)
+async def delete_learning_topic(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a learning topic and its conversation memberships. Conversations are not deleted."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    await db.delete(topic)
+    await db.commit()
