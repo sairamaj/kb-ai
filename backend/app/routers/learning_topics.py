@@ -1,0 +1,149 @@
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import CurrentUser
+from app.database import get_db
+from app.models import Conversation, LearningTopic, LearningTopicConversation
+
+router = APIRouter(prefix="/learning-topics", tags=["learning-topics"])
+
+
+class LearningTopicListItem(BaseModel):
+    id: str
+    title: str
+    description: str | None
+    conversation_count: int
+    created_at: str
+    updated_at: str
+
+
+class LearningTopicConversationItem(BaseModel):
+    conversation_id: str
+    position: int
+    title: str
+    model: str
+    tags: list[str]
+    replay_count: int
+    created_at: str
+    updated_at: str
+
+
+class LearningTopicDetailResponse(BaseModel):
+    id: str
+    title: str
+    description: str | None
+    created_at: str
+    updated_at: str
+    conversations: list[LearningTopicConversationItem]
+
+
+def _parse_topic_uuid(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+
+@router.get("", response_model=list[LearningTopicListItem])
+async def list_learning_topics(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> list[LearningTopicListItem]:
+    owner_uuid = uuid.UUID(current_user.sub)
+
+    count_subquery = (
+        select(
+            LearningTopicConversation.learning_topic_id.label("learning_topic_id"),
+            func.count(LearningTopicConversation.conversation_id).label("conversation_count"),
+        )
+        .group_by(LearningTopicConversation.learning_topic_id)
+        .subquery()
+    )
+
+    rows = (
+        await db.execute(
+            select(
+                LearningTopic,
+                func.coalesce(count_subquery.c.conversation_count, 0).label("conversation_count"),
+            )
+            .outerjoin(
+                count_subquery,
+                count_subquery.c.learning_topic_id == LearningTopic.id,
+            )
+            .where(LearningTopic.owner_id == owner_uuid)
+            .order_by(LearningTopic.updated_at.desc())
+        )
+    ).all()
+
+    return [
+        LearningTopicListItem(
+            id=str(topic.id),
+            title=topic.title,
+            description=topic.description,
+            conversation_count=conversation_count,
+            created_at=topic.created_at.isoformat(),
+            updated_at=topic.updated_at.isoformat(),
+        )
+        for topic, conversation_count in rows
+    ]
+
+
+@router.get("/{topic_id}", response_model=LearningTopicDetailResponse)
+async def get_learning_topic(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    membership_rows = (
+        await db.execute(
+            select(LearningTopicConversation, Conversation)
+            .join(
+                Conversation,
+                Conversation.id == LearningTopicConversation.conversation_id,
+            )
+            .where(LearningTopicConversation.learning_topic_id == topic_uuid)
+            .order_by(
+                LearningTopicConversation.position.asc(),
+                Conversation.created_at.asc(),
+            )
+        )
+    ).all()
+
+    return LearningTopicDetailResponse(
+        id=str(topic.id),
+        title=topic.title,
+        description=topic.description,
+        created_at=topic.created_at.isoformat(),
+        updated_at=topic.updated_at.isoformat(),
+        conversations=[
+            LearningTopicConversationItem(
+                conversation_id=str(conversation.id),
+                position=membership.position,
+                title=conversation.title,
+                model=conversation.model,
+                tags=conversation.tags or [],
+                replay_count=conversation.replay_count,
+                created_at=conversation.created_at.isoformat(),
+                updated_at=conversation.updated_at.isoformat(),
+            )
+            for membership, conversation in membership_rows
+        ],
+    )

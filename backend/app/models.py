@@ -77,6 +77,7 @@ class User(Base):
 
     conversations: Mapped[list["Conversation"]] = relationship("Conversation", back_populates="owner", cascade="all, delete-orphan")
     collections: Mapped[list["Collection"]] = relationship("Collection", back_populates="owner", cascade="all, delete-orphan")
+    learning_topics: Mapped[list["LearningTopic"]] = relationship("LearningTopic", back_populates="owner", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("oauth_provider", "oauth_sub", name="uq_user_provider_sub"),
@@ -111,6 +112,11 @@ class Conversation(Base):
     owner: Mapped["User"] = relationship("User", back_populates="conversations")
     messages: Mapped[list["Message"]] = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
     collection_links: Mapped[list["ConversationCollection"]] = relationship("ConversationCollection", back_populates="conversation", cascade="all, delete-orphan")
+    learning_topic_links: Mapped[list["LearningTopicConversation"]] = relationship(
+        "LearningTopicConversation",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -158,3 +164,65 @@ class ConversationCollection(Base):
 
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="collection_links")
     collection: Mapped["Collection"] = relationship("Collection", back_populates="conversation_links")
+
+
+# ---------------------------------------------------------------------------
+# LearningTopic
+# ---------------------------------------------------------------------------
+
+class LearningTopic(Base):
+    __tablename__ = "learning_topics"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    owner: Mapped["User"] = relationship("User", back_populates="learning_topics")
+    conversation_links: Mapped[list["LearningTopicConversation"]] = relationship(
+        "LearningTopicConversation",
+        back_populates="learning_topic",
+        cascade="all, delete-orphan",
+        order_by="LearningTopicConversation.position",
+    )
+
+
+# ---------------------------------------------------------------------------
+# LearningTopicConversation (join table)
+# ---------------------------------------------------------------------------
+
+class LearningTopicConversation(Base):
+    __tablename__ = "learning_topic_conversations"
+
+    learning_topic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("learning_topics.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    learning_topic: Mapped["LearningTopic"] = relationship("LearningTopic", back_populates="conversation_links")
+    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="learning_topic_links")
+
+    __table_args__ = (
+        UniqueConstraint("learning_topic_id", "conversation_id", name="uq_learning_topic_conversation"),
+    )
