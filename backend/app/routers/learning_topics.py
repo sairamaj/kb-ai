@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser
 from app.database import get_db
-from app.models import Conversation, LearningTopic, LearningTopicConversation
+from app.models import Conversation, LearningTopic, LearningTopicConversation, Message
 
 router = APIRouter(prefix="/learning-topics", tags=["learning-topics"])
 
@@ -52,6 +52,41 @@ class AddConversationToTopicRequest(BaseModel):
     conversation_id: str = Field(..., min_length=1)
 
 
+class ReorderLearningTopicConversationsRequest(BaseModel):
+    """Full ordered list of conversation IDs currently in the topic. Must match membership exactly (permutation)."""
+
+    conversation_ids: list[str] = Field(default_factory=list)
+
+
+class TopicReplayMessagePayload(BaseModel):
+    id: str
+    role: str
+    content: str
+    created_at: str
+
+
+class TopicReplayEntry(BaseModel):
+    conversation_id: str
+    conversation_title: str
+    message: TopicReplayMessagePayload
+
+
+class TopicReplayResponse(BaseModel):
+    topic_id: str
+    topic_title: str
+    total_messages: int
+    items: list[TopicReplayEntry]
+
+
+class TopicReplayMemberReplayCount(BaseModel):
+    conversation_id: str
+    replay_count: int
+
+
+class TopicReplayIncrementResponse(BaseModel):
+    conversation_replay_counts: list[TopicReplayMemberReplayCount]
+
+
 def _parse_topic_uuid(value: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
@@ -64,6 +99,16 @@ def _parse_conversation_uuid(value: str) -> uuid.UUID:
         return uuid.UUID(value)
     except ValueError:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+
+def _parse_conversation_uuid_reorder(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(value.strip())
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid conversation id in conversation_ids",
+        ) from None
 
 
 async def _topic_detail_response(
@@ -209,6 +254,175 @@ async def get_learning_topic(
 ) -> LearningTopicDetailResponse:
     owner_uuid = uuid.UUID(current_user.sub)
     topic_uuid = _parse_topic_uuid(topic_id)
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.get("/{topic_id}/replay", response_model=TopicReplayResponse)
+async def get_learning_topic_replay(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TopicReplayResponse:
+    """Return all messages in topic order: conversations by position, then chronological within each."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    stmt = (
+        select(Message, Conversation)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .join(
+            LearningTopicConversation,
+            (LearningTopicConversation.conversation_id == Conversation.id)
+            & (LearningTopicConversation.learning_topic_id == topic_uuid),
+        )
+        .order_by(LearningTopicConversation.position.asc(), Message.created_at.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+
+    items = [
+        TopicReplayEntry(
+            conversation_id=str(conv.id),
+            conversation_title=conv.title,
+            message=TopicReplayMessagePayload(
+                id=str(msg.id),
+                role=str(msg.role),
+                content=msg.content,
+                created_at=msg.created_at.isoformat(),
+            ),
+        )
+        for msg, conv in rows
+    ]
+
+    return TopicReplayResponse(
+        topic_id=str(topic.id),
+        topic_title=topic.title,
+        total_messages=len(items),
+        items=items,
+    )
+
+
+@router.post("/{topic_id}/replay", response_model=TopicReplayIncrementResponse)
+async def increment_learning_topic_replay_counts(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TopicReplayIncrementResponse:
+    """Increment replay_count on each conversation in the topic once (when starting topic replay)."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    result = await db.execute(
+        select(Conversation)
+        .join(
+            LearningTopicConversation,
+            LearningTopicConversation.conversation_id == Conversation.id,
+        )
+        .where(LearningTopicConversation.learning_topic_id == topic_uuid)
+    )
+    conversations = result.scalars().all()
+
+    counts: list[TopicReplayMemberReplayCount] = []
+    for conv in conversations:
+        conv.replay_count = (conv.replay_count or 0) + 1
+        counts.append(
+            TopicReplayMemberReplayCount(
+                conversation_id=str(conv.id),
+                replay_count=conv.replay_count,
+            )
+        )
+
+    await db.commit()
+
+    return TopicReplayIncrementResponse(conversation_replay_counts=counts)
+
+
+@router.patch("/{topic_id}/order", response_model=LearningTopicDetailResponse)
+async def reorder_learning_topic_conversations(
+    topic_id: str,
+    body: ReorderLearningTopicConversationsRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """Persist a new order for conversations in the topic. Payload must list every member exactly once."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    membership_rows = (
+        await db.execute(
+            select(LearningTopicConversation).where(
+                LearningTopicConversation.learning_topic_id == topic_uuid,
+            )
+        )
+    ).scalars().all()
+
+    current_ids = {str(m.conversation_id) for m in membership_rows}
+
+    parsed_ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
+    for raw in body.conversation_ids:
+        cid = _parse_conversation_uuid_reorder(raw)
+        if cid in seen:
+            raise HTTPException(
+                status_code=422,
+                detail="conversation_ids contains duplicates",
+            )
+        seen.add(cid)
+        parsed_ids.append(cid)
+
+    if len(parsed_ids) != len(current_ids):
+        raise HTTPException(
+            status_code=422,
+            detail="conversation_ids must include each conversation in the topic exactly once",
+        )
+    if set(str(x) for x in parsed_ids) != current_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="conversation_ids must match the conversations in this topic",
+        )
+
+    links_by_conv = {m.conversation_id: m for m in membership_rows}
+    for new_pos, conv_id in enumerate(parsed_ids):
+        links_by_conv[conv_id].position = new_pos
+
+    topic.updated_at = datetime.now(timezone.utc)
+    await db.commit()
 
     detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
     if detail is None:

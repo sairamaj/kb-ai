@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import type { DragEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
 import { USER_ROLE_LABELS } from '../types/auth'
 import { ThemeToggle } from './ThemeToggle'
+import { TopicReplayMode } from './TopicReplayMode'
 import { UsageDisplay } from './UsageDisplay'
 import type { CollectionSummary, CreateCollectionPayload, UpdateCollectionPayload } from '../types/collection'
 import type { ConversationSummary } from '../types/conversation'
@@ -10,6 +12,7 @@ import type {
   CreateLearningTopicPayload,
   LearningTopicDetail,
   LearningTopicListItem,
+  ReorderLearningTopicConversationsPayload,
 } from '../types/learningTopic'
 import { getApiUrl } from '../api/base'
 
@@ -128,6 +131,10 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [addingTopicConvId, setAddingTopicConvId] = useState<string | null>(null)
   const [removingTopicConvId, setRemovingTopicConvId] = useState<string | null>(null)
   const [removeTopicConvError, setRemoveTopicConvError] = useState<string | null>(null)
+  const [reorderingTopicConvs, setReorderingTopicConvs] = useState(false)
+  const [reorderTopicConvError, setReorderTopicConvError] = useState<string | null>(null)
+  const [draggingTopicConvId, setDraggingTopicConvId] = useState<string | null>(null)
+  const [showTopicReplay, setShowTopicReplay] = useState(false)
 
   const [showDeleteAccount, setShowDeleteAccount] = useState(false)
   const [isDeletingAccount, setIsDeletingAccount] = useState(false)
@@ -233,6 +240,10 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     setAddTopicConvError(null)
     setRemovingTopicConvId(null)
     setRemoveTopicConvError(null)
+    setReorderingTopicConvs(false)
+    setReorderTopicConvError(null)
+    setDraggingTopicConvId(null)
+    setShowTopicReplay(false)
   }
 
   async function loadTopicDetail(topicId: string) {
@@ -280,6 +291,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     }
     setSelectedTopicId(topicId)
     setTopicDetail(null)
+    setShowTopicReplay(false)
     void loadTopicDetail(topicId)
   }
 
@@ -323,6 +335,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       }
       const data = (await res.json()) as LearningTopicDetail
       setTopicDetail(data)
+      setReorderTopicConvError(null)
       setLearningTopics((prev) =>
         prev.map((t) =>
           t.id === selectedTopicId
@@ -358,6 +371,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       const data = (await res.json()) as LearningTopicDetail
       setTopicDetail(data)
       setRemoveTopicConvError(null)
+      setReorderTopicConvError(null)
       setLearningTopics((prev) =>
         prev.map((t) =>
           t.id === selectedTopicId
@@ -374,6 +388,82 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     } finally {
       setRemovingTopicConvId(null)
     }
+  }
+
+  async function submitReorderTopicConversations(conversationIds: string[]) {
+    if (!selectedTopicId) return
+    setReorderingTopicConvs(true)
+    setReorderTopicConvError(null)
+    try {
+      const body: ReorderLearningTopicConversationsPayload = { conversation_ids: conversationIds }
+      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/order`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(parseApiErrorMessage(data, `Reorder failed (${res.status})`))
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setLearningTopics((prev) =>
+        prev.map((t) =>
+          t.id === selectedTopicId
+            ? {
+                ...t,
+                updated_at: data.updated_at,
+              }
+            : t,
+        ),
+      )
+    } catch (err) {
+      setReorderTopicConvError(err instanceof Error ? err.message : 'Reorder failed.')
+    } finally {
+      setReorderingTopicConvs(false)
+    }
+  }
+
+  function moveTopicConversation(fromIndex: number, toIndex: number) {
+    if (!topicDetail || reorderingTopicConvs || removingTopicConvId) return
+    const n = topicDetail.conversations.length
+    if (fromIndex < 0 || fromIndex >= n || toIndex < 0 || toIndex >= n || fromIndex === toIndex) return
+    const ids = topicDetail.conversations.map((c) => c.conversation_id)
+    const [moved] = ids.splice(fromIndex, 1)
+    ids.splice(toIndex, 0, moved)
+    void submitReorderTopicConversations(ids)
+  }
+
+  function handleTopicConvDragStart(e: DragEvent, conversationId: string) {
+    if (reorderingTopicConvs || removingTopicConvId) {
+      e.preventDefault()
+      return
+    }
+    setDraggingTopicConvId(conversationId)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', conversationId)
+  }
+
+  function handleTopicConvDragOver(e: DragEvent) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+  }
+
+  function handleTopicConvDrop(e: DragEvent, targetConversationId: string) {
+    e.preventDefault()
+    const raw = e.dataTransfer.getData('text/plain') || draggingTopicConvId
+    setDraggingTopicConvId(null)
+    if (!topicDetail || !raw || raw === targetConversationId) return
+    const order = topicDetail.conversations.map((c) => c.conversation_id)
+    const from = order.indexOf(raw)
+    if (from < 0) return
+    const next = [...order]
+    const [el] = next.splice(from, 1)
+    const to = next.indexOf(targetConversationId)
+    if (to < 0) return
+    next.splice(to, 0, el)
+    void submitReorderTopicConversations(next)
   }
 
   async function submitCreateTopic() {
@@ -1385,22 +1475,46 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                         </svg>
                       </button>
                     </div>
-                    <div className="mt-4">
+                    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap sm:gap-4">
                       <button
                         type="button"
                         onClick={() => {
                           setShowAddTopicConvModal(true)
                           setAddTopicConvError(null)
                         }}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+                        className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors w-fit"
                       >
                         Add conversations
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowTopicReplay(true)}
+                        disabled={topicDetail.conversations.length === 0}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-200 font-medium hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors w-fit disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-indigo-50 dark:disabled:hover:bg-indigo-950/40"
+                      >
+                        Replay topic
+                      </button>
+                      {topicDetail.conversations.length > 0 && (
+                        <p className="text-xs text-gray-500 dark:text-gray-500 flex items-center gap-2">
+                          <span>Drag the handle or use arrows to set replay order.</span>
+                          {reorderingTopicConvs && (
+                            <span className="inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400">
+                              <span className="inline-block w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                              Saving…
+                            </span>
+                          )}
+                        </p>
+                      )}
                     </div>
                   </div>
                   {removeTopicConvError && (
                     <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
                       {removeTopicConvError}
+                    </p>
+                  )}
+                  {reorderTopicConvError && (
+                    <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                      {reorderTopicConvError}
                     </p>
                   )}
                   {topicDetail.conversations.length === 0 ? (
@@ -1410,9 +1524,32 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                     </div>
                   ) : (
                     <ul className="flex flex-col gap-2">
-                      {topicDetail.conversations.map((row) => (
-                        <li key={row.conversation_id}>
+                      {topicDetail.conversations.map((row, idx) => (
+                        <li
+                          key={row.conversation_id}
+                          onDragOver={handleTopicConvDragOver}
+                          onDrop={(e) => handleTopicConvDrop(e, row.conversation_id)}
+                          className={
+                            draggingTopicConvId === row.conversation_id
+                              ? 'opacity-70'
+                              : undefined
+                          }
+                        >
                           <div className="flex items-stretch gap-2">
+                            <button
+                              type="button"
+                              draggable={!reorderingTopicConvs && !removingTopicConvId}
+                              onDragStart={(e) => handleTopicConvDragStart(e, row.conversation_id)}
+                              onDragEnd={() => setDraggingTopicConvId(null)}
+                              disabled={reorderingTopicConvs || !!removingTopicConvId}
+                              title="Drag to reorder"
+                              aria-label={`Drag to reorder: ${row.title}`}
+                              className="shrink-0 w-9 flex items-center justify-center rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-500 cursor-grab active:cursor-grabbing hover:bg-gray-200 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M8 6a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0zm8-12a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0z" />
+                              </svg>
+                            </button>
                             <button
                               type="button"
                               onClick={() => onOpenConversation(row.conversation_id)}
@@ -1422,12 +1559,42 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                               <div className="flex items-center gap-2 mt-1 flex-wrap text-xs text-gray-400 dark:text-gray-600">
                                 <span>{row.model}</span>
                                 <span>·</span>
-                                <span>Position {row.position + 1}</span>
+                                <span>Step {row.position + 1}</span>
                               </div>
                             </button>
+                            <div className="flex flex-col gap-1 shrink-0">
+                              <button
+                                type="button"
+                                disabled={
+                                  reorderingTopicConvs ||
+                                  !!removingTopicConvId ||
+                                  idx === 0
+                                }
+                                onClick={() => moveTopicConversation(idx, idx - 1)}
+                                title="Move up"
+                                aria-label={`Move “${row.title}” up`}
+                                className="px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                disabled={
+                                  reorderingTopicConvs ||
+                                  !!removingTopicConvId ||
+                                  idx === topicDetail.conversations.length - 1
+                                }
+                                onClick={() => moveTopicConversation(idx, idx + 1)}
+                                title="Move down"
+                                aria-label={`Move “${row.title}” down`}
+                                className="px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40"
+                              >
+                                ↓
+                              </button>
+                            </div>
                             <button
                               type="button"
-                              disabled={!!removingTopicConvId}
+                              disabled={!!removingTopicConvId || reorderingTopicConvs}
                               onClick={() => void submitRemoveConversationFromTopic(row.conversation_id)}
                               className="shrink-0 px-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:border-red-200 dark:hover:border-red-900 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
                               aria-label={`Remove “${row.title}” from topic`}
@@ -1542,6 +1709,16 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
           )}
         </div>
       </div>
+      )}
+
+      {libraryView === 'learning-topics' && showTopicReplay && selectedTopicId && (
+        <TopicReplayMode
+          topicId={selectedTopicId}
+          onExit={() => {
+            setShowTopicReplay(false)
+            void loadTopicDetail(selectedTopicId)
+          }}
+        />
       )}
 
       {/* Add conversations to learning topic */}

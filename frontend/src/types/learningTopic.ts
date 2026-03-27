@@ -35,3 +35,31 @@ export interface CreateLearningTopicPayload {
 export interface AddConversationToTopicPayload {
   conversation_id: string
 }
+
+export interface ReorderLearningTopicConversationsPayload {
+  conversation_ids: string[]
+}
+
+export interface TopicReplayMessagePayload {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  created_at: string
+}
+
+export interface TopicReplayEntry {
+  conversation_id: string
+  conversation_title: string
+  message: TopicReplayMessagePayload
+}
+
+export interface TopicReplayResponse {
+  topic_id: string
+  topic_title: string
+  total_messages: number
+  items: TopicReplayEntry[]
+}
+
+export interface TopicReplayIncrementResponse {
+  conversation_replay_counts: { conversation_id: string; replay_count: number }[]
+}
