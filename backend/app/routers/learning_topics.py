@@ -1,8 +1,10 @@
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser
@@ -46,11 +48,75 @@ class CreateLearningTopicRequest(BaseModel):
     description: str | None = Field(default=None, max_length=32_000)
 
 
+class AddConversationToTopicRequest(BaseModel):
+    conversation_id: str = Field(..., min_length=1)
+
+
 def _parse_topic_uuid(value: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
     except ValueError:
         raise HTTPException(status_code=404, detail="Learning topic not found")
+
+
+def _parse_conversation_uuid(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+
+async def _topic_detail_response(
+    db: AsyncSession,
+    topic_uuid: uuid.UUID,
+    owner_uuid: uuid.UUID,
+) -> LearningTopicDetailResponse | None:
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        return None
+
+    membership_rows = (
+        await db.execute(
+            select(LearningTopicConversation, Conversation)
+            .join(
+                Conversation,
+                Conversation.id == LearningTopicConversation.conversation_id,
+            )
+            .where(LearningTopicConversation.learning_topic_id == topic_uuid)
+            .order_by(
+                LearningTopicConversation.position.asc(),
+                Conversation.created_at.asc(),
+            )
+        )
+    ).all()
+
+    return LearningTopicDetailResponse(
+        id=str(topic.id),
+        title=topic.title,
+        description=topic.description,
+        created_at=topic.created_at.isoformat(),
+        updated_at=topic.updated_at.isoformat(),
+        conversations=[
+            LearningTopicConversationItem(
+                conversation_id=str(conversation.id),
+                position=membership.position,
+                title=conversation.title,
+                model=conversation.model,
+                tags=conversation.tags or [],
+                replay_count=conversation.replay_count,
+                created_at=conversation.created_at.isoformat(),
+                updated_at=conversation.updated_at.isoformat(),
+            )
+            for membership, conversation in membership_rows
+        ],
+    )
 
 
 @router.get("", response_model=list[LearningTopicListItem])
@@ -144,6 +210,24 @@ async def get_learning_topic(
     owner_uuid = uuid.UUID(current_user.sub)
     topic_uuid = _parse_topic_uuid(topic_id)
 
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.post("/{topic_id}/conversations", response_model=LearningTopicDetailResponse, status_code=201)
+async def add_conversation_to_learning_topic(
+    topic_id: str,
+    body: AddConversationToTopicRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """Add a saved conversation to a topic. Appends to the end of the ordered list. Duplicate membership returns 409."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+    conv_uuid = _parse_conversation_uuid(body.conversation_id.strip())
+
     topic = (
         await db.execute(
             select(LearningTopic).where(
@@ -155,7 +239,99 @@ async def get_learning_topic(
     if topic is None:
         raise HTTPException(status_code=404, detail="Learning topic not found")
 
-    membership_rows = (
+    conv = (
+        await db.execute(
+            select(Conversation).where(
+                Conversation.id == conv_uuid,
+                Conversation.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    existing = (
+        await db.execute(
+            select(LearningTopicConversation).where(
+                LearningTopicConversation.learning_topic_id == topic_uuid,
+                LearningTopicConversation.conversation_id == conv_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This conversation is already in the topic",
+        )
+
+    max_pos_result = await db.execute(
+        select(func.max(LearningTopicConversation.position)).where(
+            LearningTopicConversation.learning_topic_id == topic_uuid
+        )
+    )
+    max_pos = max_pos_result.scalar_one()
+    next_position = (max_pos if max_pos is not None else -1) + 1
+
+    topic.updated_at = datetime.now(timezone.utc)
+    link = LearningTopicConversation(
+        learning_topic_id=topic_uuid,
+        conversation_id=conv_uuid,
+        position=next_position,
+    )
+    db.add(link)
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This conversation is already in the topic",
+        ) from None
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.delete("/{topic_id}/conversations/{conversation_id}", response_model=LearningTopicDetailResponse)
+async def remove_conversation_from_learning_topic(
+    topic_id: str,
+    conversation_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """Remove a conversation from a topic. Remaining memberships are renumbered 0..n-1 in stable order. The conversation row is not deleted."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+    conv_uuid = _parse_conversation_uuid(conversation_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    result = await db.execute(
+        select(LearningTopicConversation).where(
+            LearningTopicConversation.learning_topic_id == topic_uuid,
+            LearningTopicConversation.conversation_id == conv_uuid,
+        )
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status_code=404, detail="Conversation is not in this topic")
+
+    await db.delete(link)
+    await db.flush()
+
+    remaining = (
         await db.execute(
             select(LearningTopicConversation, Conversation)
             .join(
@@ -170,26 +346,16 @@ async def get_learning_topic(
         )
     ).all()
 
-    return LearningTopicDetailResponse(
-        id=str(topic.id),
-        title=topic.title,
-        description=topic.description,
-        created_at=topic.created_at.isoformat(),
-        updated_at=topic.updated_at.isoformat(),
-        conversations=[
-            LearningTopicConversationItem(
-                conversation_id=str(conversation.id),
-                position=membership.position,
-                title=conversation.title,
-                model=conversation.model,
-                tags=conversation.tags or [],
-                replay_count=conversation.replay_count,
-                created_at=conversation.created_at.isoformat(),
-                updated_at=conversation.updated_at.isoformat(),
-            )
-            for membership, conversation in membership_rows
-        ],
-    )
+    for new_pos, (membership, _) in enumerate(remaining):
+        membership.position = new_pos
+
+    topic.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
 
 
 @router.delete("/{topic_id}", status_code=204)
