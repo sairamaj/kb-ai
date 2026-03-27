@@ -69,6 +69,8 @@ class User(Base):
     lifetime_conversations_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # AUTHZ-10: Lifetime count of collections created (Starter cap); never decremented on delete.
     lifetime_collections_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # TOPIC-11: Lifetime count of learning topics created (Starter cap); never decremented on delete.
+    lifetime_learning_topics_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # REP-04: Last time the user performed an authenticated action (e.g. /auth/me).
     last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

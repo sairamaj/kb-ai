@@ -9,7 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser
 from app.database import get_db
-from app.models import Conversation, LearningTopic, LearningTopicConversation, Message
+from app.limits import PRO_LEARNING_TOPIC_LIMIT, STARTER_LEARNING_TOPIC_LIMIT
+from app.models import (
+    Conversation,
+    LearningTopic,
+    LearningTopicConversation,
+    Message,
+    MessageRole,
+    User,
+    UserRole,
+)
 
 router = APIRouter(prefix="/learning-topics", tags=["learning-topics"])
 
@@ -227,12 +236,45 @@ async def create_learning_topic(
         description = stripped if stripped else None
 
     owner_uuid = uuid.UUID(current_user.sub)
+
+    # TOPIC-11: Same role-based cap pattern as conversations (Pro = current total, Starter = lifetime).
+    user_result = await db.execute(select(User).where(User.id == owner_uuid))
+    user = user_result.scalar_one_or_none()
+    if user and user.role != UserRole.administrator:
+        if user.role == UserRole.pro:
+            count_result = await db.execute(
+                select(func.count(LearningTopic.id)).where(LearningTopic.owner_id == owner_uuid)
+            )
+            current_count = count_result.scalar() or 0
+            if current_count >= PRO_LEARNING_TOPIC_LIMIT:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Learning topic limit reached for your plan. You can have up to {PRO_LEARNING_TOPIC_LIMIT} learning topics. "
+                        "Delete an existing learning topic to create a new one."
+                    ),
+                )
+        elif user.role == UserRole.starter:
+            if (user.lifetime_learning_topics_created or 0) >= STARTER_LEARNING_TOPIC_LIMIT:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Learning topic limit reached for your plan. Starter accounts can create up to {STARTER_LEARNING_TOPIC_LIMIT} learning topics. "
+                        "Upgrade to Pro for more learning topics."
+                    ),
+                )
+
     topic = LearningTopic(
         owner_id=owner_uuid,
         title=title,
         description=description,
     )
     db.add(topic)
+    await db.flush()
+
+    if user and user.role == UserRole.starter:
+        user.lifetime_learning_topics_created = (user.lifetime_learning_topics_created or 0) + 1
+
     await db.commit()
     await db.refresh(topic)
 
@@ -267,7 +309,7 @@ async def get_learning_topic_replay(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> TopicReplayResponse:
-    """Return all messages in topic order: conversations by position, then chronological within each."""
+    """Return user/assistant messages in topic order (no system prompts); conversations by position, then chronological within each."""
     owner_uuid = uuid.UUID(current_user.sub)
     topic_uuid = _parse_topic_uuid(topic_id)
 
@@ -306,6 +348,7 @@ async def get_learning_topic_replay(
             ),
         )
         for msg, conv in rows
+        if msg.role != MessageRole.system
     ]
 
     return TopicReplayResponse(

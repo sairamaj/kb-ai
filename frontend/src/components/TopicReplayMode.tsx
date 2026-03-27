@@ -3,6 +3,7 @@ import { MessageBubble } from './MessageBubble'
 import type { Message } from '../types/chat'
 import type { TopicReplayEntry, TopicReplayResponse } from '../types/learningTopic'
 import { getApiUrl } from '../api/base'
+import { parseJsonSafe, userFacingApiError } from '../api/errors'
 
 function toUiMessage(entry: TopicReplayEntry): Message {
   return {
@@ -23,6 +24,7 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [data, setData] = useState<TopicReplayResponse | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
+  const [retryKey, setRetryKey] = useState(0)
   const postReplaySent = useRef(false)
 
   useEffect(() => {
@@ -33,13 +35,13 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
     fetch(getApiUrl(`learning-topics/${topicId}/replay`), { credentials: 'include' })
       .then(async (r) => {
         if (!r.ok) {
-          const body = await r.json().catch(() => ({}))
-          const detail = (body as { detail?: unknown })?.detail
-          const msg =
-            typeof detail === 'string'
-              ? detail
-              : `Failed to load topic replay (${r.status})`
-          throw new Error(msg)
+          const body = await parseJsonSafe(r)
+          throw new Error(
+            userFacingApiError(r.status, body, {
+              notFound: "This topic isn't available or has no replay data.",
+              forbidden: "You can't replay this topic.",
+            }),
+          )
         }
         return r.json() as Promise<TopicReplayResponse>
       })
@@ -51,7 +53,7 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : 'Failed to load topic replay.')
+          setLoadError(err instanceof Error ? err.message : "Couldn't load topic replay.")
         }
       })
       .finally(() => {
@@ -60,7 +62,7 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
     return () => {
       cancelled = true
     }
-  }, [topicId])
+  }, [topicId, retryKey])
 
   useEffect(() => {
     if (!data || data.total_messages === 0) return
@@ -115,12 +117,43 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
 
   if (loadError) {
     return (
-      <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-950 text-gray-700 dark:text-gray-300 px-4">
-        <p className="text-sm text-center max-w-md">{loadError}</p>
+      <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-5 bg-white dark:bg-gray-950 text-gray-700 dark:text-gray-300 px-4">
+        <p className="text-sm text-center max-w-md leading-relaxed">{loadError}</p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setLoadError(null)
+              setRetryKey((k) => k + 1)
+            }}
+            className="text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+          >
+            Try again
+          </button>
+          <button
+            type="button"
+            onClick={onExit}
+            className="text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 transition-colors"
+          >
+            ← Back to topic
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (data && totalMessages === 0) {
+    return (
+      <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-950 text-gray-600 dark:text-gray-400 px-4 max-w-lg mx-auto text-center">
+        <p className="text-base font-medium text-gray-800 dark:text-gray-200">Nothing to replay yet</p>
+        <p className="text-sm leading-relaxed">
+          This topic has no messages across its conversations. Add conversations that include saved messages, or open a
+          different topic from the library.
+        </p>
         <button
           type="button"
           onClick={onExit}
-          className="text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 transition-colors"
+          className="text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 transition-colors mt-1"
         >
           ← Back to topic
         </button>
@@ -128,16 +161,16 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
     )
   }
 
-  if (!data || totalMessages === 0) {
+  if (!data) {
     return (
-      <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-950 text-gray-500 dark:text-gray-400 px-4">
-        <p className="text-sm text-center">This topic has no messages to replay yet.</p>
+      <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-950 text-gray-600 dark:text-gray-400 px-4">
+        <p className="text-sm text-center">Replay couldn't be loaded.</p>
         <button
           type="button"
-          onClick={onExit}
-          className="text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 transition-colors"
+          onClick={() => setRetryKey((k) => k + 1)}
+          className="text-sm font-medium px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
         >
-          ← Back to topic
+          Try again
         </button>
       </div>
     )

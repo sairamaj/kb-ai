@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { DragEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
@@ -15,6 +15,7 @@ import type {
   ReorderLearningTopicConversationsPayload,
 } from '../types/learningTopic'
 import { getApiUrl } from '../api/base'
+import { parseJsonSafe, userFacingApiError } from '../api/errors'
 
 type LibraryView = 'conversations' | 'collections' | 'learning-topics'
 type SortOption = 'recent' | 'oldest' | 'most_replayed'
@@ -78,6 +79,11 @@ interface Props {
 export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props) {
   const queryClient = useQueryClient()
   const { user, logout, deleteAccount } = useAuth()
+
+  const learningTopicsAtLimit =
+    user?.usage != null &&
+    user.usage.learning_topics_limit !== null &&
+    user.usage.learning_topics_used >= user.usage.learning_topics_limit
 
   const [libraryView, setLibraryView] = useState<LibraryView>(readInitialLibraryView)
 
@@ -197,13 +203,19 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       })
   }, [libraryView])
 
-  useEffect(() => {
-    if (libraryView !== 'learning-topics') return
+  const loadLearningTopicsList = useCallback(() => {
     setLearningTopicsLoading(true)
     setLearningTopicsError(null)
-    fetch(getApiUrl('learning-topics'), { credentials: 'include' })
-      .then((r) => {
-        if (!r.ok) throw new Error(`Failed to load learning topics (${r.status})`)
+    return fetch(getApiUrl('learning-topics'), { credentials: 'include' })
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await parseJsonSafe(r)
+          throw new Error(
+            userFacingApiError(r.status, body, {
+              notFound: "We couldn't load your learning topics.",
+            }),
+          )
+        }
         return r.json() as Promise<LearningTopicListItem[]>
       })
       .then((data) => {
@@ -211,21 +223,15 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         setLearningTopicsLoading(false)
       })
       .catch((err: unknown) => {
-        setLearningTopicsError(err instanceof Error ? err.message : 'Failed to load learning topics.')
+        setLearningTopicsError(err instanceof Error ? err.message : "Couldn't load learning topics.")
         setLearningTopicsLoading(false)
       })
-  }, [libraryView])
+  }, [])
 
-  function parseApiErrorMessage(data: unknown, fallback: string): string {
-    const detail = (data as { detail?: unknown })?.detail
-    if (Array.isArray(detail)) {
-      return (
-        detail.map((e: { msg?: string }) => e.msg ?? '').filter(Boolean).join(', ') || fallback
-      )
-    }
-    if (typeof detail === 'string') return detail
-    return fallback
-  }
+  useEffect(() => {
+    if (libraryView !== 'learning-topics') return
+    void loadLearningTopicsList()
+  }, [libraryView, loadLearningTopicsList])
 
   function closeTopicDetail() {
     try {
@@ -252,7 +258,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     try {
       const res = await fetch(getApiUrl(`learning-topics/${topicId}`), { credentials: 'include' })
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
+        const data = await parseJsonSafe(res)
         if (res.status === 404) {
           try {
             sessionStorage.removeItem(SESSION_LEARNING_TOPIC_ID)
@@ -261,7 +267,12 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
           }
           setSelectedTopicId(null)
         }
-        throw new Error(parseApiErrorMessage(data, `Failed to load topic (${res.status})`))
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "This topic isn't available. It may have been deleted.",
+            forbidden: "You can't open this topic.",
+          }),
+        )
       }
       const data = (await res.json()) as LearningTopicDetail
       setTopicDetail(data)
@@ -330,8 +341,14 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         body: JSON.stringify({ conversation_id: conversationId }),
       })
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(parseApiErrorMessage(data, `Add failed (${res.status})`))
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "That conversation wasn't found.",
+            conflict: 'That conversation is already in this topic.',
+            forbidden: "You can't add that conversation.",
+          }),
+        )
       }
       const data = (await res.json()) as LearningTopicDetail
       setTopicDetail(data)
@@ -365,8 +382,13 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         { method: 'DELETE', credentials: 'include' },
       )
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(parseApiErrorMessage(data, `Remove failed (${res.status})`))
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "That conversation isn't in this topic.",
+            forbidden: "You can't remove that conversation.",
+          }),
+        )
       }
       const data = (await res.json()) as LearningTopicDetail
       setTopicDetail(data)
@@ -403,8 +425,13 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         body: JSON.stringify(body),
       })
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(parseApiErrorMessage(data, `Reorder failed (${res.status})`))
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "This topic wasn't found.",
+            forbidden: "You can't update the order.",
+          }),
+        )
       }
       const data = (await res.json()) as LearningTopicDetail
       setTopicDetail(data)
@@ -487,10 +514,15 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         body: JSON.stringify(body),
       })
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(parseApiErrorMessage(data, `Create failed (${res.status})`))
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            forbidden: "You've reached your learning topic limit for your plan.",
+          }),
+        )
       }
       const created = (await res.json()) as LearningTopicListItem
+      queryClient.invalidateQueries({ queryKey: ['me'] })
       setLearningTopics((prev) => [created, ...prev])
       setShowCreateTopic(false)
       setCreateTopicTitle('')
@@ -513,8 +545,13 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         credentials: 'include',
       })
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(parseApiErrorMessage(data, `Delete failed (${res.status})`))
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "That topic is no longer there.",
+            forbidden: "You can't delete that topic.",
+          }),
+        )
       }
       if (selectedTopicId === deleteTopicId) {
         closeTopicDetail()
@@ -1445,8 +1482,17 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                   <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
                 </div>
               ) : topicDetailError ? (
-                <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
-                  {topicDetailError}
+                <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="min-w-0">{topicDetailError}</p>
+                  {selectedTopicId && (
+                    <button
+                      type="button"
+                      onClick={() => void loadTopicDetail(selectedTopicId)}
+                      className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-white dark:bg-gray-950 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-100/80 dark:hover:bg-red-950/40 transition-colors"
+                    >
+                      Try again
+                    </button>
+                  )}
                 </div>
               ) : topicDetail ? (
                 <div className="space-y-4">
@@ -1519,8 +1565,12 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                   )}
                   {topicDetail.conversations.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-gray-300 dark:border-gray-700 px-4 py-8 text-center">
-                      <p className="text-sm text-gray-500 dark:text-gray-400">No conversations in this topic yet.</p>
-                      <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">Add saved conversations from your library to build your topic.</p>
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">No conversations in this topic yet</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-md mx-auto">
+                        Use <span className="font-medium text-gray-700 dark:text-gray-300">Add conversations</span> to pick
+                        saved chats from your library. Replay becomes available once you add at least one conversation that
+                        has messages.
+                      </p>
                     </div>
                   ) : (
                     <ul className="flex flex-col gap-2">
@@ -1619,13 +1669,19 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                 <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Learning topics</h2>
                 <button
                   type="button"
+                  disabled={learningTopicsAtLimit}
+                  title={
+                    learningTopicsAtLimit
+                      ? 'Learning topic limit reached for your plan. Delete a topic or upgrade to create more.'
+                      : undefined
+                  }
                   onClick={() => {
                     setShowCreateTopic(true)
                     setCreateTopicError(null)
                     setCreateTopicTitle('')
                     setCreateTopicDescription('')
                   }}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+                  className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
                 >
                   New topic
                 </button>
@@ -1635,8 +1691,15 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                   <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
                 </div>
               ) : learningTopicsError ? (
-                <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
-                  {learningTopicsError}
+                <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="min-w-0">{learningTopicsError}</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadLearningTopicsList()}
+                    className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-white dark:bg-gray-950 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-100/80 dark:hover:bg-red-950/40 transition-colors"
+                  >
+                    Try again
+                  </button>
                 </div>
               ) : learningTopics.length === 0 ? (
                 <div className="flex flex-col items-center py-16 gap-3">
@@ -1646,13 +1709,19 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                   </p>
                   <button
                     type="button"
+                    disabled={learningTopicsAtLimit}
+                    title={
+                      learningTopicsAtLimit
+                        ? 'Learning topic limit reached for your plan. Delete a topic or upgrade to create more.'
+                        : undefined
+                    }
                     onClick={() => {
                       setShowCreateTopic(true)
                       setCreateTopicError(null)
                       setCreateTopicTitle('')
                       setCreateTopicDescription('')
                     }}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+                    className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
                   >
                     New topic
                   </button>
@@ -1916,9 +1985,16 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
               </div>
             </div>
             {createTopicError && (
-              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
-                {createTopicError}
-              </p>
+              <div className="space-y-2">
+                <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                  {createTopicError}
+                </p>
+                {/learning topic limit|limit reached/i.test(createTopicError) && (
+                  <p className="text-xs text-indigo-800 dark:text-indigo-200 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg px-3 py-2">
+                    Upgrade to Pro for a higher cap, or delete an existing topic to free a slot.
+                  </p>
+                )}
+              </div>
             )}
             <div className="flex justify-end gap-2">
               <button

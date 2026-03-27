@@ -37,10 +37,12 @@ from app.help_knowledge import get_help_knowledge
 from app.limits import (
     PRO_COLLECTION_LIMIT,
     PRO_CONVERSATION_LIMIT,
+    PRO_LEARNING_TOPIC_LIMIT,
     STARTER_COLLECTION_LIMIT,
     STARTER_CONVERSATION_LIMIT,
+    STARTER_LEARNING_TOPIC_LIMIT,
 )
-from app.models import Collection, Conversation, User, UserRole
+from app.models import Collection, Conversation, LearningTopic, User, UserRole
 from app.openai_client import get_openai_client
 
 router = APIRouter(prefix="/help", tags=["help"])
@@ -58,6 +60,8 @@ class HelpUserContext:
     conversations_limit: int | None  # None for administrator (unlimited)
     collections_used: int
     collections_limit: int | None
+    learning_topics_used: int
+    learning_topics_limit: int | None
 
 
 async def get_help_user_context(
@@ -80,6 +84,8 @@ async def get_help_user_context(
             conversations_limit=None,
             collections_used=0,
             collections_limit=None,
+            learning_topics_used=0,
+            learning_topics_limit=None,
         )
     if user.role == UserRole.pro:
         conv_count = await db.execute(
@@ -88,12 +94,17 @@ async def get_help_user_context(
         coll_count = await db.execute(
             select(func.count(Collection.id)).where(Collection.owner_id == user_id)
         )
+        topic_count = await db.execute(
+            select(func.count(LearningTopic.id)).where(LearningTopic.owner_id == user_id)
+        )
         return HelpUserContext(
             role=user.role.value,
             conversations_used=conv_count.scalar() or 0,
             conversations_limit=PRO_CONVERSATION_LIMIT,
             collections_used=coll_count.scalar() or 0,
             collections_limit=PRO_COLLECTION_LIMIT,
+            learning_topics_used=topic_count.scalar() or 0,
+            learning_topics_limit=PRO_LEARNING_TOPIC_LIMIT,
         )
     # Starter: lifetime counts
     return HelpUserContext(
@@ -102,6 +113,8 @@ async def get_help_user_context(
         conversations_limit=STARTER_CONVERSATION_LIMIT,
         collections_used=user.lifetime_collections_created or 0,
         collections_limit=STARTER_COLLECTION_LIMIT,
+        learning_topics_used=user.lifetime_learning_topics_created or 0,
+        learning_topics_limit=STARTER_LEARNING_TOPIC_LIMIT,
     )
 
 
@@ -169,9 +182,11 @@ def _runtime_limits_block() -> str:
     return (
         "Current configured limits for this deployment (configurable via environment):\n"
         f"- Pro: {app_config.LIMIT_PRO_CONVERSATIONS} conversations (current total), "
-        f"{app_config.LIMIT_PRO_COLLECTIONS} collections (current total).\n"
+        f"{app_config.LIMIT_PRO_COLLECTIONS} collections (current total), "
+        f"{app_config.LIMIT_PRO_LEARNING_TOPICS} learning topics (current total).\n"
         f"- Starter: {app_config.LIMIT_STARTER_CONVERSATIONS} conversations (lifetime cap), "
-        f"{app_config.LIMIT_STARTER_COLLECTIONS} collections (lifetime cap).\n"
+        f"{app_config.LIMIT_STARTER_COLLECTIONS} collections (lifetime cap), "
+        f"{app_config.LIMIT_STARTER_LEARNING_TOPICS} learning topics (lifetime cap).\n"
         "- Administrator: unlimited.\n"
         "When citing limits, use these numbers and note they are configurable per deployment.\n"
     )
@@ -183,13 +198,14 @@ def _format_user_context_block(ctx: HelpUserContext) -> str:
     if ctx.conversations_limit is None:
         return (
             f"CURRENT USER CONTEXT (use only to personalize answers; do not repeat raw): "
-            f"The user's plan is {role_display} (unlimited conversations and collections)."
+            f"The user's plan is {role_display} (unlimited conversations, collections, and learning topics)."
         )
     return (
         f"CURRENT USER CONTEXT (use only to personalize answers; do not repeat raw): "
         f"The user's plan is {role_display}. "
-        f"They have used {ctx.conversations_used} of {ctx.conversations_limit} conversation slots "
-        f"and {ctx.collections_used} of {ctx.collections_limit} collection slots. "
+        f"They have used {ctx.conversations_used} of {ctx.conversations_limit} conversation slots, "
+        f"{ctx.collections_used} of {ctx.collections_limit} collection slots, "
+        f"and {ctx.learning_topics_used} of {ctx.learning_topics_limit} learning topic slots. "
         f"({'Lifetime cap for Starter—deleting does not free slots.' if ctx.role == 'starter' else 'Current total for Pro—deleting frees a slot.'})"
     )
 

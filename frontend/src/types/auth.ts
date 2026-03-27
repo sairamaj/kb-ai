@@ -14,6 +14,8 @@ export interface UsageInfo {
   conversations_limit: number | null
   collections_used: number
   collections_limit: number | null
+  learning_topics_used: number
+  learning_topics_limit: number | null
 }
 
 export interface AuthUser {
