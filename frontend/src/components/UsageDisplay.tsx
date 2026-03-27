@@ -15,19 +15,23 @@ function formatLimit(used: number, limit: number | null): string {
 export function UsageDisplay({ usage, compact = true, className = '' }: Props) {
   const convText = formatLimit(usage.conversations_used, usage.conversations_limit)
   const collText = formatLimit(usage.collections_used, usage.collections_limit)
-  const isUnlimited = usage.conversations_limit === null && usage.collections_limit === null
+  const topicText = formatLimit(usage.learning_topics_used, usage.learning_topics_limit)
+  const isUnlimited =
+    usage.conversations_limit === null &&
+    usage.collections_limit === null &&
+    usage.learning_topics_limit === null
 
   if (compact) {
     return (
       <span
         className={`text-[11px] text-gray-500 dark:text-gray-400 ${className}`}
-        title="Conversations and collections usage for your plan"
+        title="Conversations, collections, and learning topics usage for your plan"
       >
         {isUnlimited ? (
           'Unlimited'
         ) : (
           <>
-            {convText} conv · {collText} coll
+            {convText} conv · {collText} coll · {topicText} topics
           </>
         )}
       </span>
@@ -38,6 +42,7 @@ export function UsageDisplay({ usage, compact = true, className = '' }: Props) {
     <div className={`text-xs text-gray-600 dark:text-gray-400 space-y-0.5 ${className}`}>
       <div>Conversations: {convText}</div>
       <div>Collections: {collText}</div>
+      <div>Learning topics: {topicText}</div>
     </div>
   )
 }

@@ -26,10 +26,12 @@ from app.database import get_db
 from app.limits import (
     PRO_COLLECTION_LIMIT,
     PRO_CONVERSATION_LIMIT,
+    PRO_LEARNING_TOPIC_LIMIT,
     STARTER_COLLECTION_LIMIT,
     STARTER_CONVERSATION_LIMIT,
+    STARTER_LEARNING_TOPIC_LIMIT,
 )
-from app.models import Collection, Conversation, OAuthProvider, User, UserRole
+from app.models import Collection, Conversation, LearningTopic, OAuthProvider, User, UserRole
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -279,7 +281,7 @@ async def get_me(
     await db.refresh(user)
     owner_uuid = user.id
 
-    # AUTHZ-12: Usage for UI (conversations and collections used vs limit).
+    # AUTHZ-12: Usage for UI (conversations, collections, learning topics used vs limit).
     usage: dict
     if user.role == UserRole.administrator:
         usage = {
@@ -287,6 +289,8 @@ async def get_me(
             "conversations_limit": None,
             "collections_used": 0,
             "collections_limit": None,
+            "learning_topics_used": 0,
+            "learning_topics_limit": None,
         }
     elif user.role == UserRole.pro:
         conv_count = await db.execute(
@@ -295,11 +299,16 @@ async def get_me(
         coll_count = await db.execute(
             select(func.count(Collection.id)).where(Collection.owner_id == owner_uuid)
         )
+        topic_count = await db.execute(
+            select(func.count(LearningTopic.id)).where(LearningTopic.owner_id == owner_uuid)
+        )
         usage = {
             "conversations_used": conv_count.scalar() or 0,
             "conversations_limit": PRO_CONVERSATION_LIMIT,
             "collections_used": coll_count.scalar() or 0,
             "collections_limit": PRO_COLLECTION_LIMIT,
+            "learning_topics_used": topic_count.scalar() or 0,
+            "learning_topics_limit": PRO_LEARNING_TOPIC_LIMIT,
         }
     else:
         # Starter: use lifetime counts and starter limits
@@ -308,6 +317,8 @@ async def get_me(
             "conversations_limit": STARTER_CONVERSATION_LIMIT,
             "collections_used": user.lifetime_collections_created or 0,
             "collections_limit": STARTER_COLLECTION_LIMIT,
+            "learning_topics_used": user.lifetime_learning_topics_created or 0,
+            "learning_topics_limit": STARTER_LEARNING_TOPIC_LIMIT,
         }
 
     return {

@@ -84,13 +84,15 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-# Pro: max conversations/collections owned at once (current total).
+# Pro: max conversations/collections/learning topics owned at once (current total).
 LIMIT_PRO_CONVERSATIONS = _int_env("LIMIT_PRO_CONVERSATIONS", 100)
 LIMIT_PRO_COLLECTIONS = _int_env("LIMIT_PRO_COLLECTIONS", 50)
+LIMIT_PRO_LEARNING_TOPICS = _int_env("LIMIT_PRO_LEARNING_TOPICS", 100)
 
 # Starter: lifetime cap on creations (deleting does not free slots).
 LIMIT_STARTER_CONVERSATIONS = _int_env("LIMIT_STARTER_CONVERSATIONS", 5)
 LIMIT_STARTER_COLLECTIONS = _int_env("LIMIT_STARTER_COLLECTIONS", 5)
+LIMIT_STARTER_LEARNING_TOPICS = _int_env("LIMIT_STARTER_LEARNING_TOPICS", 5)
 
 # ---------------------------------------------------------------------------
 # Model costs for admin reports (REP-07). Cost = USD per 1K tokens.

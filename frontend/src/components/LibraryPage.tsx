@@ -1,14 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import type { DragEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
 import { USER_ROLE_LABELS } from '../types/auth'
 import { ThemeToggle } from './ThemeToggle'
+import { TopicReplayMode } from './TopicReplayMode'
 import { UsageDisplay } from './UsageDisplay'
 import type { CollectionSummary, CreateCollectionPayload, UpdateCollectionPayload } from '../types/collection'
 import type { ConversationSummary } from '../types/conversation'
+import type {
+  CreateLearningTopicPayload,
+  LearningTopicDetail,
+  LearningTopicListItem,
+  ReorderLearningTopicConversationsPayload,
+} from '../types/learningTopic'
 import { getApiUrl } from '../api/base'
+import { parseJsonSafe, userFacingApiError } from '../api/errors'
 
-type LibraryView = 'conversations' | 'collections'
+type LibraryView = 'conversations' | 'collections' | 'learning-topics'
 type SortOption = 'recent' | 'oldest' | 'most_replayed'
 type SearchMode = 'keyword' | 'semantic'
 
@@ -26,6 +35,30 @@ const SEARCH_MODE_LABELS: Record<SearchMode, string> = {
 }
 
 const SESSION_KEY = 'kb_library_sort'
+/** TOPIC-08: persist library tab + open topic across refresh and when returning from a conversation. */
+const SESSION_LIBRARY_VIEW = 'kb_library_view'
+const SESSION_LEARNING_TOPIC_ID = 'kb_learning_topic_id'
+const TOPIC_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function readStoredLearningTopicId(): string | null {
+  try {
+    const t = sessionStorage.getItem(SESSION_LEARNING_TOPIC_ID)
+    return t && TOPIC_UUID_RE.test(t) ? t : null
+  } catch {
+    return null
+  }
+}
+
+function readInitialLibraryView(): LibraryView {
+  try {
+    if (readStoredLearningTopicId()) return 'learning-topics'
+    const v = sessionStorage.getItem(SESSION_LIBRARY_VIEW) as LibraryView | null
+    if (v === 'conversations' || v === 'collections' || v === 'learning-topics') return v
+  } catch {
+    /* ignore */
+  }
+  return 'conversations'
+}
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState<T>(value)
@@ -47,7 +80,12 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const queryClient = useQueryClient()
   const { user, logout, deleteAccount } = useAuth()
 
-  const [libraryView, setLibraryView] = useState<LibraryView>('conversations')
+  const learningTopicsAtLimit =
+    user?.usage != null &&
+    user.usage.learning_topics_limit !== null &&
+    user.usage.learning_topics_used >= user.usage.learning_topics_limit
+
+  const [libraryView, setLibraryView] = useState<LibraryView>(readInitialLibraryView)
 
   const [query, setQuery] = useState('')
   const [searchMode, setSearchMode] = useState<SearchMode>('keyword')
@@ -77,6 +115,32 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [collectionVisibilityUpdating, setCollectionVisibilityUpdating] = useState<string | null>(null)
   const [copiedCollectionId, setCopiedCollectionId] = useState<string | null>(null)
   const [exportingCollectionId, setExportingCollectionId] = useState<string | null>(null)
+
+  const [learningTopics, setLearningTopics] = useState<LearningTopicListItem[]>([])
+  const [learningTopicsLoading, setLearningTopicsLoading] = useState(false)
+  const [learningTopicsError, setLearningTopicsError] = useState<string | null>(null)
+  const [showCreateTopic, setShowCreateTopic] = useState(false)
+  const [createTopicTitle, setCreateTopicTitle] = useState('')
+  const [createTopicDescription, setCreateTopicDescription] = useState('')
+  const [isCreatingTopic, setIsCreatingTopic] = useState(false)
+  const [createTopicError, setCreateTopicError] = useState<string | null>(null)
+  const [deleteTopicId, setDeleteTopicId] = useState<string | null>(null)
+  const [isDeletingTopic, setIsDeletingTopic] = useState(false)
+  const [deleteTopicError, setDeleteTopicError] = useState<string | null>(null)
+
+  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(readStoredLearningTopicId)
+  const [topicDetail, setTopicDetail] = useState<LearningTopicDetail | null>(null)
+  const [topicDetailLoading, setTopicDetailLoading] = useState(false)
+  const [topicDetailError, setTopicDetailError] = useState<string | null>(null)
+  const [showAddTopicConvModal, setShowAddTopicConvModal] = useState(false)
+  const [addTopicConvError, setAddTopicConvError] = useState<string | null>(null)
+  const [addingTopicConvId, setAddingTopicConvId] = useState<string | null>(null)
+  const [removingTopicConvId, setRemovingTopicConvId] = useState<string | null>(null)
+  const [removeTopicConvError, setRemoveTopicConvError] = useState<string | null>(null)
+  const [reorderingTopicConvs, setReorderingTopicConvs] = useState(false)
+  const [reorderTopicConvError, setReorderTopicConvError] = useState<string | null>(null)
+  const [draggingTopicConvId, setDraggingTopicConvId] = useState<string | null>(null)
+  const [showTopicReplay, setShowTopicReplay] = useState(false)
 
   const [showDeleteAccount, setShowDeleteAccount] = useState(false)
   const [isDeletingAccount, setIsDeletingAccount] = useState(false)
@@ -138,6 +202,368 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         setCollectionsLoading(false)
       })
   }, [libraryView])
+
+  const loadLearningTopicsList = useCallback(() => {
+    setLearningTopicsLoading(true)
+    setLearningTopicsError(null)
+    return fetch(getApiUrl('learning-topics'), { credentials: 'include' })
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await parseJsonSafe(r)
+          throw new Error(
+            userFacingApiError(r.status, body, {
+              notFound: "We couldn't load your learning topics.",
+            }),
+          )
+        }
+        return r.json() as Promise<LearningTopicListItem[]>
+      })
+      .then((data) => {
+        setLearningTopics(data)
+        setLearningTopicsLoading(false)
+      })
+      .catch((err: unknown) => {
+        setLearningTopicsError(err instanceof Error ? err.message : "Couldn't load learning topics.")
+        setLearningTopicsLoading(false)
+      })
+  }, [])
+
+  useEffect(() => {
+    if (libraryView !== 'learning-topics') return
+    void loadLearningTopicsList()
+  }, [libraryView, loadLearningTopicsList])
+
+  function closeTopicDetail() {
+    try {
+      sessionStorage.removeItem(SESSION_LEARNING_TOPIC_ID)
+    } catch {
+      /* ignore */
+    }
+    setSelectedTopicId(null)
+    setTopicDetail(null)
+    setTopicDetailError(null)
+    setShowAddTopicConvModal(false)
+    setAddTopicConvError(null)
+    setRemovingTopicConvId(null)
+    setRemoveTopicConvError(null)
+    setReorderingTopicConvs(false)
+    setReorderTopicConvError(null)
+    setDraggingTopicConvId(null)
+    setShowTopicReplay(false)
+  }
+
+  async function loadTopicDetail(topicId: string) {
+    setTopicDetailLoading(true)
+    setTopicDetailError(null)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${topicId}`), { credentials: 'include' })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        if (res.status === 404) {
+          try {
+            sessionStorage.removeItem(SESSION_LEARNING_TOPIC_ID)
+          } catch {
+            /* ignore */
+          }
+          setSelectedTopicId(null)
+        }
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "This topic isn't available. It may have been deleted.",
+            forbidden: "You can't open this topic.",
+          }),
+        )
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setLearningTopics((prev) =>
+        prev.map((t) =>
+          t.id === topicId
+            ? {
+                ...t,
+                conversation_count: data.conversations.length,
+                updated_at: data.updated_at,
+              }
+            : t,
+        ),
+      )
+    } catch (err) {
+      setTopicDetailError(err instanceof Error ? err.message : 'Failed to load topic.')
+    } finally {
+      setTopicDetailLoading(false)
+    }
+  }
+
+  function openTopicDetail(topicId: string) {
+    try {
+      sessionStorage.setItem(SESSION_LEARNING_TOPIC_ID, topicId)
+    } catch {
+      /* ignore */
+    }
+    setSelectedTopicId(topicId)
+    setTopicDetail(null)
+    setShowTopicReplay(false)
+    void loadTopicDetail(topicId)
+  }
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SESSION_LIBRARY_VIEW, libraryView)
+    } catch {
+      /* ignore */
+    }
+  }, [libraryView])
+
+  useEffect(() => {
+    if (libraryView !== 'learning-topics') {
+      closeTopicDetail()
+    }
+  }, [libraryView])
+
+  useEffect(() => {
+    const id = readStoredLearningTopicId()
+    if (!id) return
+    if (libraryView !== 'learning-topics') return
+    void loadTopicDetail(id)
+    // Restore topic detail once after refresh / remount (TOPIC-08).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function submitAddConversationToTopic(conversationId: string) {
+    if (!selectedTopicId) return
+    setAddingTopicConvId(conversationId)
+    setAddTopicConvError(null)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/conversations`), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: conversationId }),
+      })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "That conversation wasn't found.",
+            conflict: 'That conversation is already in this topic.',
+            forbidden: "You can't add that conversation.",
+          }),
+        )
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setReorderTopicConvError(null)
+      setLearningTopics((prev) =>
+        prev.map((t) =>
+          t.id === selectedTopicId
+            ? {
+                ...t,
+                conversation_count: data.conversations.length,
+                updated_at: data.updated_at,
+              }
+            : t,
+        ),
+      )
+      setShowAddTopicConvModal(false)
+    } catch (err) {
+      setAddTopicConvError(err instanceof Error ? err.message : 'Add failed.')
+    } finally {
+      setAddingTopicConvId(null)
+    }
+  }
+
+  async function submitRemoveConversationFromTopic(conversationId: string) {
+    if (!selectedTopicId) return
+    setRemovingTopicConvId(conversationId)
+    setRemoveTopicConvError(null)
+    try {
+      const res = await fetch(
+        getApiUrl(`learning-topics/${selectedTopicId}/conversations/${conversationId}`),
+        { method: 'DELETE', credentials: 'include' },
+      )
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "That conversation isn't in this topic.",
+            forbidden: "You can't remove that conversation.",
+          }),
+        )
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setRemoveTopicConvError(null)
+      setReorderTopicConvError(null)
+      setLearningTopics((prev) =>
+        prev.map((t) =>
+          t.id === selectedTopicId
+            ? {
+                ...t,
+                conversation_count: data.conversations.length,
+                updated_at: data.updated_at,
+              }
+            : t,
+        ),
+      )
+    } catch (err) {
+      setRemoveTopicConvError(err instanceof Error ? err.message : 'Remove failed.')
+    } finally {
+      setRemovingTopicConvId(null)
+    }
+  }
+
+  async function submitReorderTopicConversations(conversationIds: string[]) {
+    if (!selectedTopicId) return
+    setReorderingTopicConvs(true)
+    setReorderTopicConvError(null)
+    try {
+      const body: ReorderLearningTopicConversationsPayload = { conversation_ids: conversationIds }
+      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/order`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "This topic wasn't found.",
+            forbidden: "You can't update the order.",
+          }),
+        )
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setLearningTopics((prev) =>
+        prev.map((t) =>
+          t.id === selectedTopicId
+            ? {
+                ...t,
+                updated_at: data.updated_at,
+              }
+            : t,
+        ),
+      )
+    } catch (err) {
+      setReorderTopicConvError(err instanceof Error ? err.message : 'Reorder failed.')
+    } finally {
+      setReorderingTopicConvs(false)
+    }
+  }
+
+  function moveTopicConversation(fromIndex: number, toIndex: number) {
+    if (!topicDetail || reorderingTopicConvs || removingTopicConvId) return
+    const n = topicDetail.conversations.length
+    if (fromIndex < 0 || fromIndex >= n || toIndex < 0 || toIndex >= n || fromIndex === toIndex) return
+    const ids = topicDetail.conversations.map((c) => c.conversation_id)
+    const [moved] = ids.splice(fromIndex, 1)
+    ids.splice(toIndex, 0, moved)
+    void submitReorderTopicConversations(ids)
+  }
+
+  function handleTopicConvDragStart(e: DragEvent, conversationId: string) {
+    if (reorderingTopicConvs || removingTopicConvId) {
+      e.preventDefault()
+      return
+    }
+    setDraggingTopicConvId(conversationId)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', conversationId)
+  }
+
+  function handleTopicConvDragOver(e: DragEvent) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+  }
+
+  function handleTopicConvDrop(e: DragEvent, targetConversationId: string) {
+    e.preventDefault()
+    const raw = e.dataTransfer.getData('text/plain') || draggingTopicConvId
+    setDraggingTopicConvId(null)
+    if (!topicDetail || !raw || raw === targetConversationId) return
+    const order = topicDetail.conversations.map((c) => c.conversation_id)
+    const from = order.indexOf(raw)
+    if (from < 0) return
+    const next = [...order]
+    const [el] = next.splice(from, 1)
+    const to = next.indexOf(targetConversationId)
+    if (to < 0) return
+    next.splice(to, 0, el)
+    void submitReorderTopicConversations(next)
+  }
+
+  async function submitCreateTopic() {
+    const title = createTopicTitle.trim()
+    if (!title) {
+      setCreateTopicError('Title is required.')
+      return
+    }
+    setIsCreatingTopic(true)
+    setCreateTopicError(null)
+    try {
+      const desc = createTopicDescription.trim()
+      const body: CreateLearningTopicPayload = {
+        title,
+        ...(desc ? { description: desc } : {}),
+      }
+      const res = await fetch(getApiUrl('learning-topics'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            forbidden: "You've reached your learning topic limit for your plan.",
+          }),
+        )
+      }
+      const created = (await res.json()) as LearningTopicListItem
+      queryClient.invalidateQueries({ queryKey: ['me'] })
+      setLearningTopics((prev) => [created, ...prev])
+      setShowCreateTopic(false)
+      setCreateTopicTitle('')
+      setCreateTopicDescription('')
+      openTopicDetail(created.id)
+    } catch (err) {
+      setCreateTopicError(err instanceof Error ? err.message : 'Create failed.')
+    } finally {
+      setIsCreatingTopic(false)
+    }
+  }
+
+  async function confirmDeleteTopic() {
+    if (!deleteTopicId) return
+    setIsDeletingTopic(true)
+    setDeleteTopicError(null)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${deleteTopicId}`), {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "That topic is no longer there.",
+            forbidden: "You can't delete that topic.",
+          }),
+        )
+      }
+      if (selectedTopicId === deleteTopicId) {
+        closeTopicDetail()
+      }
+      setLearningTopics((prev) => prev.filter((t) => t.id !== deleteTopicId))
+      setDeleteTopicId(null)
+    } catch (err) {
+      setDeleteTopicError(err instanceof Error ? err.message : 'Delete failed.')
+    } finally {
+      setIsDeletingTopic(false)
+    }
+  }
 
   async function submitCreateCollection() {
     const name = createCollectionName.trim()
@@ -423,6 +849,16 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
           >
             Collections
           </button>
+          <button
+            onClick={() => setLibraryView('learning-topics')}
+            className={`text-left px-4 py-2.5 text-sm font-medium transition-colors ${
+              libraryView === 'learning-topics'
+                ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 border-r-2 border-indigo-500'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
+            }`}
+          >
+            Learning topics
+          </button>
         </nav>
 
         {/* Main content */}
@@ -589,6 +1025,60 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
               >
                 {isDeleting && <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />}
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete learning topic confirmation modal */}
+      {deleteTopicId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Delete learning topic?</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {(() => {
+                  const t = learningTopics.find((x) => x.id === deleteTopicId)
+                  return t ? (
+                    <>
+                      This removes{' '}
+                      <span className="text-gray-800 dark:text-gray-200 font-medium">"{t.title}"</span> and any links
+                      from this topic to conversations. Your conversations remain in the library.
+                    </>
+                  ) : (
+                    'This removes the topic and its links to conversations. Your conversations are not deleted.'
+                  )
+                })()}
+              </p>
+            </div>
+            {deleteTopicError && (
+              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                {deleteTopicError}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteTopicId(null)
+                  setDeleteTopicError(null)
+                }}
+                disabled={isDeletingTopic}
+                className="px-4 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => { void confirmDeleteTopic() }}
+                disabled={isDeletingTopic}
+                className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isDeletingTopic && (
+                  <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                )}
+                Delete topic
               </button>
             </div>
           </div>
@@ -972,6 +1462,404 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       </div>
       )}
 
+      {/* Learning topics view */}
+      {libraryView === 'learning-topics' && (
+      <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="max-w-3xl mx-auto space-y-4">
+          {selectedTopicId ? (
+            <>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => closeTopicDetail()}
+                  className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                >
+                  ← Topics
+                </button>
+              </div>
+              {topicDetailLoading ? (
+                <div className="flex justify-center py-16">
+                  <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+                </div>
+              ) : topicDetailError ? (
+                <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="min-w-0">{topicDetailError}</p>
+                  {selectedTopicId && (
+                    <button
+                      type="button"
+                      onClick={() => void loadTopicDetail(selectedTopicId)}
+                      className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-white dark:bg-gray-950 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-100/80 dark:hover:bg-red-950/40 transition-colors"
+                    >
+                      Try again
+                    </button>
+                  )}
+                </div>
+              ) : topicDetail ? (
+                <div className="space-y-4">
+                  <div className="relative group">
+                    <div className="flex items-start justify-between gap-3 pr-10">
+                      <div>
+                        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{topicDetail.title}</h2>
+                        {topicDetail.description && (
+                          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 whitespace-pre-wrap">{topicDetail.description}</p>
+                        )}
+                        <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">
+                          Updated {formatDate(topicDetail.updated_at)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeleteTopicId(topicDetail.id)
+                          setDeleteTopicError(null)
+                        }}
+                        aria-label="Delete learning topic"
+                        className="absolute top-0 right-0 p-1.5 rounded-md text-gray-400 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap sm:gap-4">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAddTopicConvModal(true)
+                          setAddTopicConvError(null)
+                        }}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors w-fit"
+                      >
+                        Add conversations
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowTopicReplay(true)}
+                        disabled={topicDetail.conversations.length === 0}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-200 font-medium hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors w-fit disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-indigo-50 dark:disabled:hover:bg-indigo-950/40"
+                      >
+                        Replay topic
+                      </button>
+                      {topicDetail.conversations.length > 0 && (
+                        <p className="text-xs text-gray-500 dark:text-gray-500 flex items-center gap-2">
+                          <span>Drag the handle or use arrows to set replay order.</span>
+                          {reorderingTopicConvs && (
+                            <span className="inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400">
+                              <span className="inline-block w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                              Saving…
+                            </span>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {removeTopicConvError && (
+                    <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                      {removeTopicConvError}
+                    </p>
+                  )}
+                  {reorderTopicConvError && (
+                    <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                      {reorderTopicConvError}
+                    </p>
+                  )}
+                  {topicDetail.conversations.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-gray-300 dark:border-gray-700 px-4 py-8 text-center">
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">No conversations in this topic yet</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-md mx-auto">
+                        Use <span className="font-medium text-gray-700 dark:text-gray-300">Add conversations</span> to pick
+                        saved chats from your library. Replay becomes available once you add at least one conversation that
+                        has messages.
+                      </p>
+                    </div>
+                  ) : (
+                    <ul className="flex flex-col gap-2">
+                      {topicDetail.conversations.map((row, idx) => (
+                        <li
+                          key={row.conversation_id}
+                          onDragOver={handleTopicConvDragOver}
+                          onDrop={(e) => handleTopicConvDrop(e, row.conversation_id)}
+                          className={
+                            draggingTopicConvId === row.conversation_id
+                              ? 'opacity-70'
+                              : undefined
+                          }
+                        >
+                          <div className="flex items-stretch gap-2">
+                            <button
+                              type="button"
+                              draggable={!reorderingTopicConvs && !removingTopicConvId}
+                              onDragStart={(e) => handleTopicConvDragStart(e, row.conversation_id)}
+                              onDragEnd={() => setDraggingTopicConvId(null)}
+                              disabled={reorderingTopicConvs || !!removingTopicConvId}
+                              title="Drag to reorder"
+                              aria-label={`Drag to reorder: ${row.title}`}
+                              className="shrink-0 w-9 flex items-center justify-center rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-500 cursor-grab active:cursor-grabbing hover:bg-gray-200 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M8 6a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0zm8-12a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0z" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onOpenConversation(row.conversation_id)}
+                              className="flex-1 min-w-0 text-left bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3 hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors"
+                            >
+                              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{row.title}</p>
+                              <div className="flex items-center gap-2 mt-1 flex-wrap text-xs text-gray-400 dark:text-gray-600">
+                                <span>{row.model}</span>
+                                <span>·</span>
+                                <span>Step {row.position + 1}</span>
+                              </div>
+                            </button>
+                            <div className="flex flex-col gap-1 shrink-0">
+                              <button
+                                type="button"
+                                disabled={
+                                  reorderingTopicConvs ||
+                                  !!removingTopicConvId ||
+                                  idx === 0
+                                }
+                                onClick={() => moveTopicConversation(idx, idx - 1)}
+                                title="Move up"
+                                aria-label={`Move “${row.title}” up`}
+                                className="px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                disabled={
+                                  reorderingTopicConvs ||
+                                  !!removingTopicConvId ||
+                                  idx === topicDetail.conversations.length - 1
+                                }
+                                onClick={() => moveTopicConversation(idx, idx + 1)}
+                                title="Move down"
+                                aria-label={`Move “${row.title}” down`}
+                                className="px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40"
+                              >
+                                ↓
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={!!removingTopicConvId || reorderingTopicConvs}
+                              onClick={() => void submitRemoveConversationFromTopic(row.conversation_id)}
+                              className="shrink-0 px-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:border-red-200 dark:hover:border-red-900 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
+                              aria-label={`Remove “${row.title}” from topic`}
+                            >
+                              {removingTopicConvId === row.conversation_id ? (
+                                <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                              ) : (
+                                'Remove'
+                              )}
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Learning topics</h2>
+                <button
+                  type="button"
+                  disabled={learningTopicsAtLimit}
+                  title={
+                    learningTopicsAtLimit
+                      ? 'Learning topic limit reached for your plan. Delete a topic or upgrade to create more.'
+                      : undefined
+                  }
+                  onClick={() => {
+                    setShowCreateTopic(true)
+                    setCreateTopicError(null)
+                    setCreateTopicTitle('')
+                    setCreateTopicDescription('')
+                  }}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
+                >
+                  New topic
+                </button>
+              </div>
+              {learningTopicsLoading ? (
+                <div className="flex justify-center py-16">
+                  <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+                </div>
+              ) : learningTopicsError ? (
+                <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="min-w-0">{learningTopicsError}</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadLearningTopicsList()}
+                    className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-white dark:bg-gray-950 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-100/80 dark:hover:bg-red-950/40 transition-colors"
+                  >
+                    Try again
+                  </button>
+                </div>
+              ) : learningTopics.length === 0 ? (
+                <div className="flex flex-col items-center py-16 gap-3">
+                  <p className="text-gray-500 text-sm">No learning topics yet.</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-600 text-center max-w-sm">
+                    Create a topic to organize related conversations for study and replay.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={learningTopicsAtLimit}
+                    title={
+                      learningTopicsAtLimit
+                        ? 'Learning topic limit reached for your plan. Delete a topic or upgrade to create more.'
+                        : undefined
+                    }
+                    onClick={() => {
+                      setShowCreateTopic(true)
+                      setCreateTopicError(null)
+                      setCreateTopicTitle('')
+                      setCreateTopicDescription('')
+                    }}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
+                  >
+                    New topic
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs text-gray-400 dark:text-gray-600 mb-2">
+                    {learningTopics.length} topic{learningTopics.length !== 1 ? 's' : ''}
+                  </p>
+                  {learningTopics.map((t) => (
+                    <div
+                      key={t.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openTopicDetail(t.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          openTopicDetail(t.id)
+                        }
+                      }}
+                      className="relative group bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3.5 pr-12 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-800 transition-colors"
+                    >
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{t.title}</p>
+                      {t.description && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">{t.description}</p>
+                      )}
+                      <div className="flex items-center gap-2 mt-2 flex-wrap text-xs text-gray-400 dark:text-gray-600">
+                        <span>
+                          {t.conversation_count} conversation{t.conversation_count !== 1 ? 's' : ''}
+                        </span>
+                        <span>·</span>
+                        <span>Updated {formatDate(t.updated_at)}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setDeleteTopicId(t.id)
+                          setDeleteTopicError(null)
+                        }}
+                        aria-label="Delete learning topic"
+                        className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-gray-400 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      )}
+
+      {libraryView === 'learning-topics' && showTopicReplay && selectedTopicId && (
+        <TopicReplayMode
+          topicId={selectedTopicId}
+          onExit={() => {
+            setShowTopicReplay(false)
+            void loadTopicDetail(selectedTopicId)
+          }}
+        />
+      )}
+
+      {/* Add conversations to learning topic */}
+      {libraryView === 'learning-topics' && showAddTopicConvModal && topicDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 max-w-lg w-full mx-4 max-h-[min(80vh,32rem)] shadow-2xl flex flex-col gap-4">
+            <div className="flex flex-col gap-1 shrink-0">
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Add conversations</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Choose saved conversations from your library to add to &ldquo;{topicDetail.title}&rdquo;. They are appended to the end of the topic order.
+              </p>
+            </div>
+            {addTopicConvError && (
+              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2 shrink-0">
+                {addTopicConvError}
+              </p>
+            )}
+            <div className="overflow-y-auto flex-1 min-h-0 space-y-2 pr-1">
+              {(() => {
+                const memberIds = new Set(topicDetail.conversations.map((c) => c.conversation_id))
+                const available = conversations.filter((c) => !memberIds.has(c.id))
+                if (available.length === 0) {
+                  return (
+                    <p className="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">
+                      {conversations.length === 0
+                        ? 'No conversations in your library yet. Save a chat first, then add it here.'
+                        : 'Every library conversation is already in this topic.'}
+                    </p>
+                  )
+                }
+                return available.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{c.title}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-500 truncate">{c.model}</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!!addingTopicConvId}
+                      onClick={() => void submitAddConversationToTopic(c.id)}
+                      className="shrink-0 text-xs px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50"
+                    >
+                      {addingTopicConvId === c.id ? (
+                        <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                      ) : (
+                        'Add'
+                      )}
+                    </button>
+                  </div>
+                ))
+              })()}
+            </div>
+            <div className="flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddTopicConvModal(false)
+                  setAddTopicConvError(null)
+                }}
+                disabled={!!addingTopicConvId}
+                className="px-4 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Create collection modal */}
       {showCreateCollection && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -1050,6 +1938,83 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                 className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
               >
                 {isCreatingCollection && (
+                  <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                )}
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create learning topic modal */}
+      {showCreateTopic && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl flex flex-col gap-4">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">New learning topic</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Add a title and an optional description. Open the topic afterward to add conversations from your library.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="topic-title" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                  Title
+                </label>
+                <input
+                  id="topic-title"
+                  type="text"
+                  value={createTopicTitle}
+                  onChange={(e) => setCreateTopicTitle(e.target.value)}
+                  placeholder="e.g. Python asyncio"
+                  className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-indigo-500"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label htmlFor="topic-description" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                  Description <span className="font-normal text-gray-500">(optional)</span>
+                </label>
+                <textarea
+                  id="topic-description"
+                  value={createTopicDescription}
+                  onChange={(e) => setCreateTopicDescription(e.target.value)}
+                  placeholder="Notes or goals for this topic…"
+                  rows={3}
+                  className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 resize-y min-h-[4.5rem]"
+                />
+              </div>
+            </div>
+            {createTopicError && (
+              <div className="space-y-2">
+                <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                  {createTopicError}
+                </p>
+                {/learning topic limit|limit reached/i.test(createTopicError) && (
+                  <p className="text-xs text-indigo-800 dark:text-indigo-200 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg px-3 py-2">
+                    Upgrade to Pro for a higher cap, or delete an existing topic to free a slot.
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateTopic(false)
+                  setCreateTopicError(null)
+                }}
+                disabled={isCreatingTopic}
+                className="px-4 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitCreateTopic()}
+                disabled={isCreatingTopic}
+                className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isCreatingTopic && (
                   <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
                 )}
                 Create

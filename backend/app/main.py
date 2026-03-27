@@ -12,7 +12,7 @@ from urllib.parse import urlparse  # noqa: E402
 import app.models  # noqa: F401, E402 — register models on Base.metadata
 from app.database import engine  # noqa: E402
 from app.config import CORS_ORIGINS, FRONTEND_URL  # noqa: E402
-from app.routers import auth, chat, conversations, feed, collections, users, help, reports  # noqa: E402
+from app.routers import auth, chat, conversations, feed, collections, users, help, reports, learning_topics  # noqa: E402
 
 app = FastAPI(title="Prompt KB API", version="0.1.0")
 
@@ -98,6 +98,7 @@ app.include_router(chat.router)
 app.include_router(conversations.router)
 app.include_router(feed.router)
 app.include_router(collections.router)
+app.include_router(learning_topics.router)
 app.include_router(users.router)
 app.include_router(help.router)
 app.include_router(reports.router)
