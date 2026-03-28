@@ -13,6 +13,7 @@ import type {
   LearningTopicDetail,
   LearningTopicListItem,
   ReorderLearningTopicConversationsPayload,
+  UpdateLearningTopicPayload,
 } from '../types/learningTopic'
 import { getApiUrl } from '../api/base'
 import { parseJsonSafe, userFacingApiError } from '../api/errors'
@@ -126,6 +127,9 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [createTopicDescription, setCreateTopicDescription] = useState('')
   const [isCreatingTopic, setIsCreatingTopic] = useState(false)
   const [createTopicError, setCreateTopicError] = useState<string | null>(null)
+  const [createTopicVisibility, setCreateTopicVisibility] = useState<'public' | 'private'>('private')
+  const [topicVisibilityUpdating, setTopicVisibilityUpdating] = useState<string | null>(null)
+  const [copiedTopicId, setCopiedTopicId] = useState<string | null>(null)
   const [deleteTopicId, setDeleteTopicId] = useState<string | null>(null)
   const [isDeletingTopic, setIsDeletingTopic] = useState(false)
   const [deleteTopicError, setDeleteTopicError] = useState<string | null>(null)
@@ -295,6 +299,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
           t.id === topicId
             ? {
                 ...t,
+                visibility: data.visibility,
                 conversation_count: data.conversations.length,
                 updated_at: data.updated_at,
               }
@@ -519,6 +524,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       const desc = createTopicDescription.trim()
       const body: CreateLearningTopicPayload = {
         title,
+        visibility: createTopicVisibility,
         ...(desc ? { description: desc } : {}),
       }
       const res = await fetch(getApiUrl('learning-topics'), {
@@ -541,6 +547,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       setShowCreateTopic(false)
       setCreateTopicTitle('')
       setCreateTopicDescription('')
+      setCreateTopicVisibility('private')
       openTopicDetail(created.id)
     } catch (err) {
       setCreateTopicError(err instanceof Error ? err.message : 'Create failed.')
@@ -638,6 +645,43 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     void navigator.clipboard.writeText(url).then(() => {
       setCopiedCollectionId(collectionId)
       setTimeout(() => setCopiedCollectionId(null), 2000)
+    })
+  }
+
+  async function updateLearningTopicVisibility(topicId: string, visibility: 'public' | 'private') {
+    setTopicVisibilityUpdating(topicId)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${topicId}`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visibility } satisfies UpdateLearningTopicPayload),
+      })
+      if (!res.ok) throw new Error('Failed to update')
+      const updated = (await res.json()) as LearningTopicListItem
+      setLearningTopics((prev) =>
+        prev.map((t) =>
+          t.id === topicId
+            ? {
+                ...t,
+                visibility: updated.visibility,
+                conversation_count: updated.conversation_count,
+                updated_at: updated.updated_at,
+              }
+            : t,
+        ),
+      )
+      setTopicDetail((d) => (d && d.id === topicId ? { ...d, visibility: updated.visibility } : d))
+    } finally {
+      setTopicVisibilityUpdating(null)
+    }
+  }
+
+  function copyLearningTopicLink(topicId: string) {
+    const url = `${window.location.origin}/learning-topics/public/${topicId}`
+    void navigator.clipboard.writeText(url).then(() => {
+      setCopiedTopicId(topicId)
+      setTimeout(() => setCopiedTopicId(null), 2000)
     })
   }
 
@@ -1526,9 +1570,45 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                         {topicDetail.description && (
                           <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 whitespace-pre-wrap">{topicDetail.description}</p>
                         )}
-                        <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">
-                          Updated {formatDate(topicDetail.updated_at)}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void updateLearningTopicVisibility(
+                                topicDetail.id,
+                                topicDetail.visibility === 'public' ? 'private' : 'public',
+                              )
+                            }
+                            disabled={topicVisibilityUpdating === topicDetail.id}
+                            className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
+                              topicDetail.visibility === 'public'
+                                ? 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60'
+                                : 'bg-gray-100 dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-400'
+                            } disabled:opacity-50`}
+                            title={
+                              topicDetail.visibility === 'public' ? 'Click to make private' : 'Click to make public'
+                            }
+                          >
+                            {topicVisibilityUpdating === topicDetail.id ? '…' : topicDetail.visibility}
+                          </button>
+                          {topicDetail.visibility === 'public' && (
+                            <button
+                              type="button"
+                              onClick={() => copyLearningTopicLink(topicDetail.id)}
+                              className="text-xs px-2 py-0.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                              title="Copy shareable link"
+                            >
+                              {copiedTopicId === topicDetail.id ? (
+                                <span className="text-green-600 dark:text-green-400">Copied!</span>
+                              ) : (
+                                'Copy link'
+                              )}
+                            </button>
+                          )}
+                          <span className="text-xs text-gray-400 dark:text-gray-600">
+                            Updated {formatDate(topicDetail.updated_at)}
+                          </span>
+                        </div>
                       </div>
                       <button
                         type="button"
@@ -1703,6 +1783,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                     setCreateTopicError(null)
                     setCreateTopicTitle('')
                     setCreateTopicDescription('')
+                    setCreateTopicVisibility('private')
                   }}
                   className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
                 >
@@ -1743,6 +1824,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                       setCreateTopicError(null)
                       setCreateTopicTitle('')
                       setCreateTopicDescription('')
+                      setCreateTopicVisibility('private')
                     }}
                     className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
                   >
@@ -1754,47 +1836,131 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                   <p className="text-xs text-gray-400 dark:text-gray-600 mb-2">
                     {learningTopics.length} topic{learningTopics.length !== 1 ? 's' : ''}
                   </p>
-                  {learningTopics.map((t) => (
+                  {learningTopics.map((t) => {
+                    const isOwned = t.is_owner !== false
+                    return (
                     <div
                       key={t.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openTopicDetail(t.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          openTopicDetail(t.id)
-                        }
-                      }}
-                      className="relative group bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3.5 pr-12 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-800 transition-colors"
+                      className="relative group bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3.5 flex items-center justify-between gap-3"
                     >
-                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{t.title}</p>
-                      {t.description && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">{t.description}</p>
-                      )}
-                      <div className="flex items-center gap-2 mt-2 flex-wrap text-xs text-gray-400 dark:text-gray-600">
-                        <span>
-                          {t.conversation_count} conversation{t.conversation_count !== 1 ? 's' : ''}
-                        </span>
-                        <span>·</span>
-                        <span>Updated {formatDate(t.updated_at)}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteTopicId(t.id)
-                          setDeleteTopicError(null)
-                        }}
-                        aria-label="Delete learning topic"
-                        className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-gray-400 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                      <div
+                        role={isOwned ? 'button' : undefined}
+                        tabIndex={isOwned ? 0 : undefined}
+                        onClick={isOwned ? () => openTopicDetail(t.id) : undefined}
+                        onKeyDown={
+                          isOwned
+                            ? (e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault()
+                                  openTopicDetail(t.id)
+                                }
+                              }
+                            : undefined
+                        }
+                        className={`min-w-0 flex-1 ${isOwned ? 'cursor-pointer hover:opacity-90' : ''}`}
                       >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{t.title}</p>
+                        {t.description && (
+                          <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">{t.description}</p>
+                        )}
+                        <div className="flex items-center gap-2 mt-2 flex-wrap text-xs text-gray-400 dark:text-gray-600">
+                          {!isOwned && t.author_name && (
+                            <span className="text-xs text-gray-500 dark:text-gray-400">by {t.author_name}</span>
+                          )}
+                          <span>
+                            {isOwned
+                              ? `${t.conversation_count} conversation${t.conversation_count !== 1 ? 's' : ''}`
+                              : `${t.conversation_count} public conversation${t.conversation_count !== 1 ? 's' : ''}`}
+                          </span>
+                          <span>·</span>
+                          <span>Updated {formatDate(t.updated_at)}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {isOwned ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void updateLearningTopicVisibility(
+                                  t.id,
+                                  t.visibility === 'public' ? 'private' : 'public',
+                                )
+                              }
+                              disabled={topicVisibilityUpdating === t.id}
+                              className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
+                                t.visibility === 'public'
+                                  ? 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60'
+                                  : 'bg-gray-100 dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-400'
+                              } disabled:opacity-50`}
+                              title={t.visibility === 'public' ? 'Click to make private' : 'Click to make public'}
+                            >
+                              {topicVisibilityUpdating === t.id ? '…' : t.visibility}
+                            </button>
+                            {t.visibility === 'public' && (
+                              <button
+                                type="button"
+                                onClick={() => copyLearningTopicLink(t.id)}
+                                className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5"
+                                title="Copy shareable link"
+                              >
+                                {copiedTopicId === t.id ? (
+                                  <span className="text-green-600 dark:text-green-400">Copied!</span>
+                                ) : (
+                                  <>
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                    Copy link
+                                  </>
+                                )}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeleteTopicId(t.id)
+                                setDeleteTopicError(null)
+                              }}
+                              aria-label="Delete learning topic"
+                              className="p-1.5 rounded-md text-gray-400 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <a
+                              href={`/learning-topics/public/${t.id}`}
+                              className="text-xs px-2 py-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-900/40 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/60 transition-colors"
+                            >
+                              View
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => copyLearningTopicLink(t.id)}
+                              className="text-xs px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5"
+                              title="Copy shareable link"
+                            >
+                              {copiedTopicId === t.id ? (
+                                <span className="text-green-600 dark:text-green-400">Copied!</span>
+                              ) : (
+                                <>
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                  </svg>
+                                  Copy link
+                                </>
+                              )}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </>
@@ -1976,7 +2142,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl flex flex-col gap-4">
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">New learning topic</h2>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              Add a title and an optional description. Open the topic afterward to add conversations from your library.
+              Add a title, optional description, and visibility. Open the topic afterward to add conversations from your library.
             </p>
             <div className="space-y-3">
               <div>
@@ -2005,6 +2171,33 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                   rows={3}
                   className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 resize-y min-h-[4.5rem]"
                 />
+              </div>
+              <div>
+                <span className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Visibility</span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCreateTopicVisibility('private')}
+                    className={`flex-1 text-xs py-2 rounded-lg border transition-colors ${
+                      createTopicVisibility === 'private'
+                        ? 'bg-indigo-600 border-indigo-500 text-white'
+                        : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    Private
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateTopicVisibility('public')}
+                    className={`flex-1 text-xs py-2 rounded-lg border transition-colors ${
+                      createTopicVisibility === 'public'
+                        ? 'bg-indigo-600 border-indigo-500 text-white'
+                        : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    Public
+                  </button>
+                </div>
               </div>
             </div>
             {createTopicError && (

@@ -79,6 +79,35 @@ curl -v https://<app-name>.azurewebsites.net/health
 
 If the image pulls successfully and the application code starts without errors, `/health` should return a 2xx status instead of the Azure Application Error page.
 
+## Local Docker Compose: `alembic upgrade head` fails on the workstation
+
+If you run `alembic upgrade head` from PowerShell or a terminal **on your machine** (not inside a container) while using the stack from `docker-compose.yml`, the command can fail with a connection error such as `socket.gaierror` / “getaddrinfo failed” when resolving the database host.
+
+- **Cause**
+  - `backend/.env` (and `backend/.env.example`) typically set `DATABASE_URL` with host **`db`**. That hostname exists only on the **Docker Compose network** (the Postgres service name). Your workstation cannot resolve `db`, so Alembic on the host never reaches PostgreSQL.
+
+- **Migrations on container start**
+  - The backend **dev** image runs `alembic upgrade head` before starting uvicorn. If `docker compose up` brings the backend up successfully, the database is usually already migrated.
+
+- **Fix (recommended): run Alembic inside the backend container**
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+  That uses the Compose-provided `DATABASE_URL` (`...@db:5432/...`), which is correct from inside the container.
+
+- **Alternative: run Alembic on the host**
+  - With the DB port published (`5432:5432` in Compose), point at **localhost** for a one-off command:
+
+```powershell
+$env:DATABASE_URL = "postgresql+asyncpg://kb_user:kb_password@localhost:5432/kb_db"
+cd backend
+alembic upgrade head
+```
+
+  Use the same user, password, and database name as in your Compose Postgres service (`kb_user` / `kb_password` / `kb_db` unless you changed them).
+
 ## Azure PostgreSQL connectivity and Alembic migration failures
 
 When the backend container starts but `alembic upgrade head` fails, use the logs to determine whether the problem is network reachability, SSL configuration, or authentication.

@@ -1,11 +1,13 @@
+import math
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth import CurrentUser
 from app.database import get_db
@@ -18,6 +20,7 @@ from app.models import (
     MessageRole,
     User,
     UserRole,
+    Visibility,
 )
 
 router = APIRouter(prefix="/learning-topics", tags=["learning-topics"])
@@ -27,9 +30,13 @@ class LearningTopicListItem(BaseModel):
     id: str
     title: str
     description: str | None
+    visibility: str
     conversation_count: int
     created_at: str
     updated_at: str
+    is_owner: bool = True
+    author_name: str | None = None
+    author_avatar: str | None = None
 
 
 class LearningTopicConversationItem(BaseModel):
@@ -47,6 +54,7 @@ class LearningTopicDetailResponse(BaseModel):
     id: str
     title: str
     description: str | None
+    visibility: str
     created_at: str
     updated_at: str
     conversations: list[LearningTopicConversationItem]
@@ -55,6 +63,56 @@ class LearningTopicDetailResponse(BaseModel):
 class CreateLearningTopicRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=256)
     description: str | None = Field(default=None, max_length=32_000)
+    visibility: str = "private"
+
+
+class UpdateLearningTopicRequest(BaseModel):
+    visibility: str | None = None
+
+
+class PublicLearningTopicConversationItem(BaseModel):
+    id: str
+    title: str
+    tags: list[str]
+    model: str
+    message_count: int
+    replay_count: int
+    created_at: str
+    updated_at: str
+    author_name: str
+    author_avatar: str | None
+
+
+class PublicLearningTopicDetailResponse(BaseModel):
+    id: str
+    title: str
+    description: str | None
+    created_at: str
+    updated_at: str
+    author_name: str
+    author_avatar: str | None
+    conversations: list[PublicLearningTopicConversationItem]
+
+
+class PublicLearningTopicDiscoveryItem(BaseModel):
+    """One public learning topic for unauthenticated discovery (guest feed)."""
+
+    id: str
+    title: str
+    description: str | None
+    conversation_count: int
+    created_at: str
+    updated_at: str
+    author_name: str
+    author_avatar: str | None
+
+
+class PublicLearningTopicDiscoveryResponse(BaseModel):
+    items: list[PublicLearningTopicDiscoveryItem]
+    total: int
+    page: int
+    per_page: int
+    pages: int
 
 
 class AddConversationToTopicRequest(BaseModel):
@@ -155,6 +213,7 @@ async def _topic_detail_response(
         id=str(topic.id),
         title=topic.title,
         description=topic.description,
+        visibility=topic.visibility,
         created_at=topic.created_at.isoformat(),
         updated_at=topic.updated_at.isoformat(),
         conversations=[
@@ -178,43 +237,88 @@ async def list_learning_topics(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> list[LearningTopicListItem]:
+    """List learning topics: the user's own (full member counts) plus public topics from others (public conv counts)."""
     owner_uuid = uuid.UUID(current_user.sub)
 
-    count_subquery = (
+    all_members_count_sq = (
         select(
-            LearningTopicConversation.learning_topic_id.label("learning_topic_id"),
-            func.count(LearningTopicConversation.conversation_id).label("conversation_count"),
+            LearningTopicConversation.learning_topic_id.label("ltid"),
+            func.count(LearningTopicConversation.conversation_id).label("cnt"),
         )
         .group_by(LearningTopicConversation.learning_topic_id)
         .subquery()
     )
 
-    rows = (
+    public_members_count_sq = (
+        select(
+            LearningTopicConversation.learning_topic_id.label("ltid"),
+            func.count(LearningTopicConversation.conversation_id).label("cnt"),
+        )
+        .select_from(LearningTopicConversation)
+        .join(Conversation, Conversation.id == LearningTopicConversation.conversation_id)
+        .where(Conversation.visibility == Visibility.public)
+        .group_by(LearningTopicConversation.learning_topic_id)
+        .subquery()
+    )
+
+    own_rows = (
         await db.execute(
             select(
                 LearningTopic,
-                func.coalesce(count_subquery.c.conversation_count, 0).label("conversation_count"),
+                func.coalesce(all_members_count_sq.c.cnt, 0).label("conversation_count"),
             )
-            .outerjoin(
-                count_subquery,
-                count_subquery.c.learning_topic_id == LearningTopic.id,
-            )
+            .outerjoin(all_members_count_sq, all_members_count_sq.c.ltid == LearningTopic.id)
             .where(LearningTopic.owner_id == owner_uuid)
             .order_by(LearningTopic.updated_at.desc())
         )
     ).all()
 
-    return [
+    out: list[LearningTopicListItem] = [
         LearningTopicListItem(
             id=str(topic.id),
             title=topic.title,
             description=topic.description,
-            conversation_count=conversation_count,
+            visibility=topic.visibility,
+            conversation_count=int(conversation_count),
             created_at=topic.created_at.isoformat(),
             updated_at=topic.updated_at.isoformat(),
+            is_owner=True,
         )
-        for topic, conversation_count in rows
+        for topic, conversation_count in own_rows
     ]
+
+    other_result = await db.execute(
+        select(
+            LearningTopic,
+            func.coalesce(public_members_count_sq.c.cnt, 0).label("conversation_count"),
+        )
+        .outerjoin(public_members_count_sq, public_members_count_sq.c.ltid == LearningTopic.id)
+        .where(
+            LearningTopic.owner_id != owner_uuid,
+            LearningTopic.visibility == Visibility.public,
+        )
+        .options(selectinload(LearningTopic.owner))
+        .order_by(LearningTopic.updated_at.desc())
+    )
+    other_rows = other_result.unique().all()
+
+    for topic, conversation_count in other_rows:
+        out.append(
+            LearningTopicListItem(
+                id=str(topic.id),
+                title=topic.title,
+                description=topic.description,
+                visibility=topic.visibility,
+                conversation_count=int(conversation_count),
+                created_at=topic.created_at.isoformat(),
+                updated_at=topic.updated_at.isoformat(),
+                is_owner=False,
+                author_name=topic.owner.display_name,
+                author_avatar=topic.owner.avatar_url,
+            )
+        )
+
+    return out
 
 
 @router.post("", response_model=LearningTopicListItem, status_code=201)
@@ -234,6 +338,14 @@ async def create_learning_topic(
     if body.description is not None:
         stripped = body.description.strip()
         description = stripped if stripped else None
+
+    try:
+        visibility = Visibility(body.visibility)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="visibility must be 'public' or 'private'",
+        ) from None
 
     owner_uuid = uuid.UUID(current_user.sub)
 
@@ -268,6 +380,7 @@ async def create_learning_topic(
         owner_id=owner_uuid,
         title=title,
         description=description,
+        visibility=visibility,
     )
     db.add(topic)
     await db.flush()
@@ -282,9 +395,193 @@ async def create_learning_topic(
         id=str(topic.id),
         title=topic.title,
         description=topic.description,
+        visibility=topic.visibility,
         conversation_count=0,
         created_at=topic.created_at.isoformat(),
         updated_at=topic.updated_at.isoformat(),
+        is_owner=True,
+    )
+
+
+@router.get("/public", response_model=PublicLearningTopicDiscoveryResponse)
+async def list_public_learning_topics(
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+) -> PublicLearningTopicDiscoveryResponse:
+    """Paginated list of public learning topics for guests (no authentication)."""
+    offset = (page - 1) * per_page
+
+    public_members_count_sq = (
+        select(
+            LearningTopicConversation.learning_topic_id.label("ltid"),
+            func.count(LearningTopicConversation.conversation_id).label("cnt"),
+        )
+        .select_from(LearningTopicConversation)
+        .join(Conversation, Conversation.id == LearningTopicConversation.conversation_id)
+        .where(Conversation.visibility == Visibility.public)
+        .group_by(LearningTopicConversation.learning_topic_id)
+        .subquery()
+    )
+
+    base_where = LearningTopic.visibility == Visibility.public
+
+    total_result = await db.execute(select(func.count()).select_from(LearningTopic).where(base_where))
+    total: int = total_result.scalar_one()
+
+    rows = (
+        await db.execute(
+            select(
+                LearningTopic,
+                func.coalesce(public_members_count_sq.c.cnt, 0).label("conversation_count"),
+            )
+            .outerjoin(public_members_count_sq, public_members_count_sq.c.ltid == LearningTopic.id)
+            .where(base_where)
+            .options(selectinload(LearningTopic.owner))
+            .order_by(LearningTopic.updated_at.desc())
+            .limit(per_page)
+            .offset(offset)
+        )
+    ).unique().all()
+
+    items = [
+        PublicLearningTopicDiscoveryItem(
+            id=str(topic.id),
+            title=topic.title,
+            description=topic.description,
+            conversation_count=int(conv_count),
+            created_at=topic.created_at.isoformat(),
+            updated_at=topic.updated_at.isoformat(),
+            author_name=topic.owner.display_name,
+            author_avatar=topic.owner.avatar_url,
+        )
+        for topic, conv_count in rows
+    ]
+
+    pages = math.ceil(total / per_page) if total > 0 else 1
+
+    return PublicLearningTopicDiscoveryResponse(
+        items=items,
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=pages,
+    )
+
+
+@router.get("/{topic_id}/public", response_model=PublicLearningTopicDetailResponse)
+async def get_public_learning_topic(
+    topic_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> PublicLearningTopicDetailResponse:
+    """Public topic and its public conversations only. No authentication."""
+    topic_uuid = _parse_topic_uuid(topic_id)
+    result = await db.execute(
+        select(LearningTopic).where(LearningTopic.id == topic_uuid).options(selectinload(LearningTopic.owner))
+    )
+    topic = result.scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    if topic.visibility != Visibility.public:
+        raise HTTPException(status_code=403, detail="This learning topic is private")
+
+    msg_count_sq = (
+        select(func.count(Message.id))
+        .where(Message.conversation_id == Conversation.id)
+        .correlate(Conversation)
+        .scalar_subquery()
+    )
+    stmt = (
+        select(Conversation, msg_count_sq.label("message_count"))
+        .join(
+            LearningTopicConversation,
+            LearningTopicConversation.conversation_id == Conversation.id,
+        )
+        .where(
+            LearningTopicConversation.learning_topic_id == topic_uuid,
+            Conversation.visibility == Visibility.public,
+        )
+        .options(selectinload(Conversation.owner))
+        .order_by(LearningTopicConversation.position.asc(), Conversation.created_at.asc())
+    )
+    rows = (await db.execute(stmt)).unique().all()
+
+    conversations = [
+        PublicLearningTopicConversationItem(
+            id=str(conv.id),
+            title=conv.title,
+            tags=conv.tags or [],
+            model=conv.model,
+            message_count=msg_count,
+            replay_count=conv.replay_count,
+            created_at=conv.created_at.isoformat(),
+            updated_at=conv.updated_at.isoformat(),
+            author_name=conv.owner.display_name,
+            author_avatar=conv.owner.avatar_url,
+        )
+        for conv, msg_count in rows
+    ]
+
+    return PublicLearningTopicDetailResponse(
+        id=str(topic.id),
+        title=topic.title,
+        description=topic.description,
+        created_at=topic.created_at.isoformat(),
+        updated_at=topic.updated_at.isoformat(),
+        author_name=topic.owner.display_name,
+        author_avatar=topic.owner.avatar_url,
+        conversations=conversations,
+    )
+
+
+@router.get("/{topic_id}/public/replay", response_model=TopicReplayResponse)
+async def get_public_learning_topic_replay(
+    topic_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TopicReplayResponse:
+    """Step-through replay for guests: public topic only; user/assistant messages from public conversations in topic order."""
+    topic_uuid = _parse_topic_uuid(topic_id)
+    topic = (
+        await db.execute(select(LearningTopic).where(LearningTopic.id == topic_uuid))
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    if topic.visibility != Visibility.public:
+        raise HTTPException(status_code=403, detail="This learning topic is private")
+
+    stmt = (
+        select(Message, Conversation)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .join(
+            LearningTopicConversation,
+            (LearningTopicConversation.conversation_id == Conversation.id)
+            & (LearningTopicConversation.learning_topic_id == topic_uuid),
+        )
+        .where(Conversation.visibility == Visibility.public)
+        .order_by(LearningTopicConversation.position.asc(), Message.created_at.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+
+    items = [
+        TopicReplayEntry(
+            conversation_id=str(conv.id),
+            conversation_title=conv.title,
+            message=TopicReplayMessagePayload(
+                id=str(msg.id),
+                role=str(msg.role),
+                content=msg.content,
+                created_at=msg.created_at.isoformat(),
+            ),
+        )
+        for msg, conv in rows
+        if msg.role != MessageRole.system
+    ]
+
+    return TopicReplayResponse(
+        topic_id=str(topic.id),
+        topic_title=topic.title,
+        total_messages=len(items),
+        items=items,
     )
 
 
@@ -301,6 +598,59 @@ async def get_learning_topic(
     if detail is None:
         raise HTTPException(status_code=404, detail="Learning topic not found")
     return detail
+
+
+@router.patch("/{topic_id}", response_model=LearningTopicListItem)
+async def update_learning_topic(
+    topic_id: str,
+    body: UpdateLearningTopicRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicListItem:
+    """Update visibility (and reserved for future fields). Owner only."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    if body.visibility is not None:
+        try:
+            topic.visibility = Visibility(body.visibility)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="visibility must be 'public' or 'private'",
+            ) from None
+
+    await db.commit()
+    await db.refresh(topic)
+
+    count_result = await db.execute(
+        select(func.count(LearningTopicConversation.conversation_id)).where(
+            LearningTopicConversation.learning_topic_id == topic_uuid,
+        )
+    )
+    conversation_count = int(count_result.scalar() or 0)
+
+    return LearningTopicListItem(
+        id=str(topic.id),
+        title=topic.title,
+        description=topic.description,
+        visibility=topic.visibility,
+        conversation_count=conversation_count,
+        created_at=topic.created_at.isoformat(),
+        updated_at=topic.updated_at.isoformat(),
+        is_owner=True,
+    )
 
 
 @router.get("/{topic_id}/replay", response_model=TopicReplayResponse)

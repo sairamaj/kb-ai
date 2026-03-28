@@ -17,9 +17,11 @@ function toUiMessage(entry: TopicReplayEntry): Message {
 interface Props {
   topicId: string
   onExit: () => void
+  /** Guest/public topic page: unauthenticated replay; no replay_count increment. */
+  replaySource?: 'authenticated' | 'public'
 }
 
-export function TopicReplayMode({ topicId, onExit }: Props) {
+export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated' }: Props) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [data, setData] = useState<TopicReplayResponse | null>(null)
@@ -32,7 +34,14 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
     let cancelled = false
     setLoading(true)
     setLoadError(null)
-    fetch(getApiUrl(`learning-topics/${topicId}/replay`), { credentials: 'include' })
+    const replayUrl =
+      replaySource === 'public'
+        ? getApiUrl(`learning-topics/${topicId}/public/replay`)
+        : getApiUrl(`learning-topics/${topicId}/replay`)
+    const replayInit: RequestInit =
+      replaySource === 'public' ? {} : { credentials: 'include' as RequestCredentials }
+
+    fetch(replayUrl, replayInit)
       .then(async (r) => {
         if (!r.ok) {
           const body = await parseJsonSafe(r)
@@ -62,9 +71,10 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
     return () => {
       cancelled = true
     }
-  }, [topicId, retryKey])
+  }, [topicId, retryKey, replaySource])
 
   useEffect(() => {
+    if (replaySource === 'public') return
     if (!data || data.total_messages === 0) return
     if (postReplaySent.current) return
     postReplaySent.current = true
@@ -74,7 +84,7 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
     })
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => undefined)
-  }, [data, topicId])
+  }, [data, topicId, replaySource])
 
   const items = data?.items ?? []
   const totalMessages = items.length
@@ -147,8 +157,9 @@ export function TopicReplayMode({ topicId, onExit }: Props) {
       <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-950 text-gray-600 dark:text-gray-400 px-4 max-w-lg mx-auto text-center">
         <p className="text-base font-medium text-gray-800 dark:text-gray-200">Nothing to replay yet</p>
         <p className="text-sm leading-relaxed">
-          This topic has no messages across its conversations. Add conversations that include saved messages, or open a
-          different topic from the library.
+          {replaySource === 'public'
+            ? 'This topic has no user or assistant messages in its public conversations yet.'
+            : 'This topic has no messages across its conversations. Add conversations that include saved messages, or open a different topic from the library.'}
         </p>
         <button
           type="button"

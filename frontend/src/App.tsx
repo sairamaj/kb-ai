@@ -7,6 +7,7 @@ import { ConversationDetailPage } from './components/ConversationDetailPage'
 import { LibraryPage } from './components/LibraryPage'
 import { PublicConversationPage } from './components/PublicConversationPage'
 import { PublicCollectionPage } from './components/PublicCollectionPage'
+import { PublicLearningTopicPage } from './components/PublicLearningTopicPage'
 import { FeedPage } from './components/FeedPage'
 import { HelpPopup } from './components/HelpPopup'
 import { ReportsPage } from './components/ReportsPage'
@@ -18,6 +19,7 @@ type AppPage =
   | { name: 'conversation'; id: string; from: 'chat' | 'library' }
   | { name: 'public-conversation'; id: string }
   | { name: 'public-collection'; id: string }
+  | { name: 'public-learning-topic'; id: string }
   | { name: 'feed' }
   | { name: 'reports' }
 
@@ -32,6 +34,10 @@ function parsePath(pathname: string): AppPage {
   if (publicColMatch && UUID_RE.test(publicColMatch[1])) {
     return { name: 'public-collection', id: publicColMatch[1] }
   }
+  const publicTopicMatch = pathname.match(/^\/learning-topics\/public\/(.+)$/)
+  if (publicTopicMatch && UUID_RE.test(publicTopicMatch[1])) {
+    return { name: 'public-learning-topic', id: publicTopicMatch[1] }
+  }
   if (pathname === '/feed') return { name: 'feed' }
   if (pathname === '/reports') return { name: 'reports' }
   if (pathname === '/help') return { name: 'chat' }
@@ -41,6 +47,7 @@ function parsePath(pathname: string): AppPage {
 function pageToPath(page: AppPage): string {
   if (page.name === 'public-conversation') return `/c/${page.id}`
   if (page.name === 'public-collection') return `/collections/public/${page.id}`
+  if (page.name === 'public-learning-topic') return `/learning-topics/public/${page.id}`
   if (page.name === 'feed') return '/feed'
   if (page.name === 'reports') return '/reports'
   return '/'
@@ -108,10 +115,22 @@ function AppShell() {
     )
   }
 
+  if (page.name === 'public-learning-topic') {
+    return (
+      <PublicLearningTopicPage
+        id={page.id}
+        onGoToFeed={() => setPage({ name: 'feed' })}
+        onGoToLogin={() => setPage({ name: 'chat' })}
+        onOpenConversation={(id) => setPage({ name: 'public-conversation', id })}
+      />
+    )
+  }
+
   if (page.name === 'feed') {
     return (
       <FeedPage
         onOpenConversation={(id) => setPage({ name: 'public-conversation', id })}
+        onOpenPublicLearningTopic={(id) => setPage({ name: 'public-learning-topic', id })}
         onGoToLogin={() => setPage({ name: 'chat' })}
       />
     )
