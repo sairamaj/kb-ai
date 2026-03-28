@@ -16,6 +16,7 @@ import type {
 } from '../types/learningTopic'
 import { getApiUrl } from '../api/base'
 import { parseJsonSafe, userFacingApiError } from '../api/errors'
+import { SHOW_COLLECTIONS_IN_UI } from '../config/features'
 
 type LibraryView = 'conversations' | 'collections' | 'learning-topics'
 type SortOption = 'recent' | 'oldest' | 'most_replayed'
@@ -53,6 +54,7 @@ function readInitialLibraryView(): LibraryView {
   try {
     if (readStoredLearningTopicId()) return 'learning-topics'
     const v = sessionStorage.getItem(SESSION_LIBRARY_VIEW) as LibraryView | null
+    if (v === 'collections' && !SHOW_COLLECTIONS_IN_UI) return 'conversations'
     if (v === 'conversations' || v === 'collections' || v === 'learning-topics') return v
   } catch {
     /* ignore */
@@ -167,7 +169,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     if (debouncedQuery) params.set('q', debouncedQuery)
     params.set('search_mode', searchMode)
     selectedTags.forEach((t) => params.append('tags', t))
-    if (selectedCollectionId) params.set('collection_id', selectedCollectionId)
+    if (SHOW_COLLECTIONS_IN_UI && selectedCollectionId) params.set('collection_id', selectedCollectionId)
     params.set('sort', sort)
 
     fetch(getApiUrl(`conversations?${params.toString()}`), { credentials: 'include' })
@@ -186,6 +188,12 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   }, [debouncedQuery, searchMode, selectedTags, selectedCollectionId, sort])
 
   useEffect(() => {
+    if (!SHOW_COLLECTIONS_IN_UI) {
+      setCollections([])
+      setCollectionsLoading(false)
+      setCollectionsError(null)
+      return
+    }
     setCollectionsLoading(true)
     setCollectionsError(null)
     fetch(getApiUrl('collections'), { credentials: 'include' })
@@ -201,6 +209,12 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         setCollectionsError(err instanceof Error ? err.message : 'Failed to load collections.')
         setCollectionsLoading(false)
       })
+  }, [libraryView])
+
+  useEffect(() => {
+    if (!SHOW_COLLECTIONS_IN_UI && libraryView === 'collections') {
+      setLibraryView('conversations')
+    }
   }, [libraryView])
 
   const loadLearningTopicsList = useCallback(() => {
@@ -767,7 +781,10 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     })
   }
 
-  const hasFilter = debouncedQuery.length > 0 || selectedTags.length > 0 || selectedCollectionId !== null
+  const hasFilter =
+    debouncedQuery.length > 0 ||
+    selectedTags.length > 0 ||
+    (SHOW_COLLECTIONS_IN_UI && selectedCollectionId !== null)
 
   return (
     <div className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
@@ -839,16 +856,18 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
           >
             Conversations
           </button>
-          <button
-            onClick={() => setLibraryView('collections')}
-            className={`text-left px-4 py-2.5 text-sm font-medium transition-colors ${
-              libraryView === 'collections'
-                ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 border-r-2 border-indigo-500'
-                : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
-            }`}
-          >
-            Collections
-          </button>
+          {SHOW_COLLECTIONS_IN_UI && (
+            <button
+              onClick={() => setLibraryView('collections')}
+              className={`text-left px-4 py-2.5 text-sm font-medium transition-colors ${
+                libraryView === 'collections'
+                  ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 border-r-2 border-indigo-500'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
+              }`}
+            >
+              Collections
+            </button>
+          )}
           <button
             onClick={() => setLibraryView('learning-topics')}
             className={`text-left px-4 py-2.5 text-sm font-medium transition-colors ${
@@ -942,7 +961,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
             </div>
 
             {/* Collection filter */}
-            {collections.length > 0 && (
+            {SHOW_COLLECTIONS_IN_UI && collections.length > 0 && (
               <>
                 <div className="w-px h-4 bg-gray-300 dark:bg-gray-700" />
                 <select
@@ -1093,8 +1112,10 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
               <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Delete your account?</h2>
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 This will permanently delete your account and{' '}
-                <span className="text-gray-800 dark:text-gray-200 font-medium">all your conversations, messages, and collections</span>.
-                This action cannot be undone.
+                <span className="text-gray-800 dark:text-gray-200 font-medium">
+                  all your conversations, messages, learning topics, and other data tied to your account
+                </span>
+                . This action cannot be undone.
               </p>
             </div>
             {deleteAccountError && (
@@ -1205,58 +1226,60 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                       </div>
                     </div>
                   </button>
-                  {/* Collections: chips + add dropdown */}
-                  <div
-                    className="px-4 pb-3 flex flex-wrap items-center gap-2 border-t border-gray-200/80 dark:border-gray-800/80 mt-0 pt-2"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {(conv.collection_ids ?? []).map((colId) => {
-                      const col = collections.find((c) => c.id === colId)
-                      const isRemoving = collectionAction?.convId === conv.id && collectionAction?.collectionId === colId
-                      return (
-                        <span
-                          key={colId}
-                          className="inline-flex items-center gap-1 text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50 rounded-full pl-2 pr-1 py-0.5"
-                        >
-                          {col?.name ?? colId.slice(0, 8)}
-                          <button
-                            type="button"
-                            onClick={() => { void removeConversationFromCollection(conv.id, colId) }}
-                            disabled={!!collectionAction}
-                            aria-label={`Remove from ${col?.name ?? 'collection'}`}
-                            className="p-0.5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-800/50 disabled:opacity-50"
+                  {SHOW_COLLECTIONS_IN_UI && (
+                    <div
+                      className="px-4 pb-3 flex flex-wrap items-center gap-2 border-t border-gray-200/80 dark:border-gray-800/80 mt-0 pt-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {(conv.collection_ids ?? []).map((colId) => {
+                        const col = collections.find((c) => c.id === colId)
+                        const isRemoving =
+                          collectionAction?.convId === conv.id && collectionAction?.collectionId === colId
+                        return (
+                          <span
+                            key={colId}
+                            className="inline-flex items-center gap-1 text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50 rounded-full pl-2 pr-1 py-0.5"
                           >
-                            {isRemoving ? (
-                              <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin inline-block" />
-                            ) : (
-                              <span className="text-amber-600 dark:text-amber-400">×</span>
-                            )}
-                          </button>
-                        </span>
-                      )
-                    })}
-                    {collections.length > 0 && (
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          const colId = e.target.value
-                          if (colId) void addConversationToCollection(conv.id, colId)
-                          e.target.value = ''
-                        }}
-                        disabled={!!collectionAction}
-                        className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 text-gray-600 dark:text-gray-400 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
-                      >
-                        <option value="">Add to collection…</option>
-                        {collections
-                          .filter((c) => c.is_owner !== false && !(conv.collection_ids ?? []).includes(c.id))
-                          .map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                            </option>
-                          ))}
-                      </select>
-                    )}
-                  </div>
+                            {col?.name ?? colId.slice(0, 8)}
+                            <button
+                              type="button"
+                              onClick={() => { void removeConversationFromCollection(conv.id, colId) }}
+                              disabled={!!collectionAction}
+                              aria-label={`Remove from ${col?.name ?? 'collection'}`}
+                              className="p-0.5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-800/50 disabled:opacity-50"
+                            >
+                              {isRemoving ? (
+                                <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin inline-block" />
+                              ) : (
+                                <span className="text-amber-600 dark:text-amber-400">×</span>
+                              )}
+                            </button>
+                          </span>
+                        )
+                      })}
+                      {collections.length > 0 && (
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const colId = e.target.value
+                            if (colId) void addConversationToCollection(conv.id, colId)
+                            e.target.value = ''
+                          }}
+                          disabled={!!collectionAction}
+                          className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 text-gray-600 dark:text-gray-400 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                        >
+                          <option value="">Add to collection…</option>
+                          {collections
+                            .filter((c) => c.is_owner !== false && !(conv.collection_ids ?? []).includes(c.id))
+                            .map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
                   <button
                     onClick={(e) => { e.stopPropagation(); void togglePin(conv.id) }}
                     disabled={pinningConvId === conv.id}
@@ -1294,7 +1317,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       )}
 
       {/* Collections view */}
-      {libraryView === 'collections' && (
+      {SHOW_COLLECTIONS_IN_UI && libraryView === 'collections' && (
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto space-y-4">
           <div className="flex items-center justify-between">
@@ -1861,7 +1884,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       )}
 
       {/* Create collection modal */}
-      {showCreateCollection && (
+      {SHOW_COLLECTIONS_IN_UI && showCreateCollection && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl flex flex-col gap-4">
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">New collection</h2>

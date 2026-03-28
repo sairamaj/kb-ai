@@ -1,4 +1,5 @@
 import type { UsageInfo } from '../types/auth'
+import { SHOW_COLLECTIONS_IN_UI } from '../config/features'
 
 interface Props {
   usage: UsageInfo
@@ -18,20 +19,31 @@ export function UsageDisplay({ usage, compact = true, className = '' }: Props) {
   const topicText = formatLimit(usage.learning_topics_used, usage.learning_topics_limit)
   const isUnlimited =
     usage.conversations_limit === null &&
-    usage.collections_limit === null &&
+    (!SHOW_COLLECTIONS_IN_UI || usage.collections_limit === null) &&
     usage.learning_topics_limit === null
 
   if (compact) {
     return (
       <span
         className={`text-[11px] text-gray-500 dark:text-gray-400 ${className}`}
-        title="Conversations, collections, and learning topics usage for your plan"
+        title={
+          SHOW_COLLECTIONS_IN_UI
+            ? 'Conversations, collections, and learning topics usage for your plan'
+            : 'Conversations and learning topics usage for your plan'
+        }
       >
         {isUnlimited ? (
           'Unlimited'
         ) : (
           <>
-            {convText} conv · {collText} coll · {topicText} topics
+            {convText} conv
+            {SHOW_COLLECTIONS_IN_UI && (
+              <>
+                {' '}
+                · {collText} coll
+              </>
+            )}{' '}
+            · {topicText} topics
           </>
         )}
       </span>
@@ -41,7 +53,7 @@ export function UsageDisplay({ usage, compact = true, className = '' }: Props) {
   return (
     <div className={`text-xs text-gray-600 dark:text-gray-400 space-y-0.5 ${className}`}>
       <div>Conversations: {convText}</div>
-      <div>Collections: {collText}</div>
+      {SHOW_COLLECTIONS_IN_UI && <div>Collections: {collText}</div>}
       <div>Learning topics: {topicText}</div>
     </div>
   )

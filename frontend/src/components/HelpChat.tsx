@@ -8,19 +8,26 @@ import { ChatInput } from './ChatInput'
 import { TypingIndicator } from './TypingIndicator'
 import type { Message } from '../types/chat'
 import { getApiUrl } from '../api/base'
+import { SHOW_COLLECTIONS_IN_UI } from '../config/features'
 
 function nextId(): string {
   return `help-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-const APP_OVERVIEW = `Prompt Knowledge Base replaces a traditional notes-based knowledge base with saved AI conversations. You chat with an AI assistant, save conversations to your library, and revisit them later—including step-by-step "replay" mode—to rebuild understanding over time. You can organize conversations in collections and share them as public or private.`
+const APP_OVERVIEW = SHOW_COLLECTIONS_IN_UI
+  ? `Prompt Knowledge Base replaces a traditional notes-based knowledge base with saved AI conversations. You chat with an AI assistant, save conversations to your library, and revisit them later—including step-by-step "replay" mode—to rebuild understanding over time. You can organize conversations in collections and share them as public or private.`
+  : `Prompt Knowledge Base replaces a traditional notes-based knowledge base with saved AI conversations. You chat with an AI assistant, save conversations to your library, and revisit them later—including step-by-step "replay" mode—to rebuild understanding over time. You can mark conversations public or private to share links.`
 
 const SUGGESTED_PROMPTS = [
   'How do I save a conversation?',
   'What is replay mode and how do I use it?',
   'How do I search or find conversations in the Library?',
-  'What are collections and how do I create one?',
-  'What are my conversation and collection limits?',
+  ...(SHOW_COLLECTIONS_IN_UI
+    ? ([
+        'What are collections and how do I create one?',
+        'What are my conversation and collection limits?',
+      ] as const)
+    : (['What are my conversation limits?'] as const)),
   'How do I make a conversation public or private?',
 ]
 
@@ -130,7 +137,10 @@ export function HelpChat() {
               <p className="text-xs font-semibold text-amber-800 dark:text-amber-200 mb-1.5">Brief overview</p>
               <p className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">{APP_OVERVIEW}</p>
             </div>
-            <p className="text-center mb-2">Ask about saving conversations, replay mode, library, collections, or your plan limits.</p>
+            <p className="text-center mb-2">
+              Ask about saving conversations, replay mode, the library{SHOW_COLLECTIONS_IN_UI ? ', collections' : ''}, and
+              your plan limits.
+            </p>
             <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Suggested questions — click to ask:</p>
             <SuggestedPromptsList onSelect={handleSelectPrompt} disabled={isLoading} />
           </div>

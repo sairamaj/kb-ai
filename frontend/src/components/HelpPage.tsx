@@ -3,6 +3,7 @@
  * Uses HelpChat for the chat body. Kept for potential full-page use; primary UI is HelpPopup.
  */
 import { HelpChat } from './HelpChat'
+import { SHOW_COLLECTIONS_IN_UI } from '../config/features'
 
 interface Props {
   onBack: () => void
@@ -34,7 +35,7 @@ export function HelpPage({ onBack }: Props) {
           </div>
         </div>
         <p className="text-xs text-gray-600 dark:text-gray-400">
-          Questions about the app—features, saving, library, collections, plans
+          Questions about the app—features, saving, library{SHOW_COLLECTIONS_IN_UI ? ', collections' : ''}, plans
         </p>
       </header>
 

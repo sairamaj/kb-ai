@@ -10,6 +10,7 @@ import { ConversationDetail, UpdateConversationPayload } from '../types/conversa
 import type { CollectionSummary } from '../types/collection'
 import { Message } from '../types/chat'
 import { getApiUrl } from '../api/base'
+import { SHOW_COLLECTIONS_IN_UI } from '../config/features'
 
 interface Props {
   id: string
@@ -129,6 +130,7 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
   }, [id])
 
   useEffect(() => {
+    if (!SHOW_COLLECTIONS_IN_UI) return
     fetch(getApiUrl('collections'), { credentials: 'include' })
       .then((r) => (r.ok ? (r.json() as Promise<CollectionSummary[]>) : []))
       .then(setCollections)
@@ -550,56 +552,57 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
               )}
             </div>
 
-            {/* Collections */}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs text-gray-500 uppercase tracking-wide">Collections</span>
-              <div className="flex flex-wrap items-center gap-2">
-                {(conv.collection_ids ?? []).map((colId) => {
-                  const col = collections.find((c) => c.id === colId)
-                  const isRemoving = collectionAction?.collectionId === colId
-                  return (
-                    <span
-                      key={colId}
-                      className="inline-flex items-center gap-1 text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50 rounded-full pl-2 pr-1 py-0.5"
-                    >
-                      {col?.name ?? colId.slice(0, 8)}
-                      <button
-                        type="button"
-                        onClick={() => { void removeFromCollection(colId) }}
-                        disabled={!!collectionAction}
-                        aria-label={`Remove from ${col?.name ?? 'collection'}`}
-                        className="p-0.5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-800/50 disabled:opacity-50 text-amber-600 dark:text-amber-400"
+            {SHOW_COLLECTIONS_IN_UI && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Collections</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  {(conv.collection_ids ?? []).map((colId) => {
+                    const col = collections.find((c) => c.id === colId)
+                    const isRemoving = collectionAction?.collectionId === colId
+                    return (
+                      <span
+                        key={colId}
+                        className="inline-flex items-center gap-1 text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50 rounded-full pl-2 pr-1 py-0.5"
                       >
-                        {isRemoving ? (
-                          <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin inline-block" />
-                        ) : (
-                          '×'
-                        )}
-                      </button>
-                    </span>
-                  )
-                })}
-                {collections.length > 0 && (
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      const cid = e.target.value
-                      if (cid) void addToCollection(cid)
-                      e.target.value = ''
-                    }}
-                    disabled={!!collectionAction}
-                    className="text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 text-gray-600 dark:text-gray-400 focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="">Add to collection…</option>
-                    {collections
-                      .filter((c) => c.is_owner !== false && !(conv.collection_ids ?? []).includes(c.id))
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                  </select>
-                )}
+                        {col?.name ?? colId.slice(0, 8)}
+                        <button
+                          type="button"
+                          onClick={() => { void removeFromCollection(colId) }}
+                          disabled={!!collectionAction}
+                          aria-label={`Remove from ${col?.name ?? 'collection'}`}
+                          className="p-0.5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-800/50 disabled:opacity-50 text-amber-600 dark:text-amber-400"
+                        >
+                          {isRemoving ? (
+                            <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin inline-block" />
+                          ) : (
+                            '×'
+                          )}
+                        </button>
+                      </span>
+                    )
+                  })}
+                  {collections.length > 0 && (
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const cid = e.target.value
+                        if (cid) void addToCollection(cid)
+                        e.target.value = ''
+                      }}
+                      disabled={!!collectionAction}
+                      className="text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 text-gray-600 dark:text-gray-400 focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="">Add to collection…</option>
+                      {collections
+                        .filter((c) => c.is_owner !== false && !(conv.collection_ids ?? []).includes(c.id))
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                    </select>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Pin toggle */}
             <div className="flex flex-col gap-1.5">
