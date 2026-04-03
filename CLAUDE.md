@@ -44,6 +44,18 @@ cd backend && alembic revision -m "describe change"
 cd backend && alembic downgrade -1
 ```
 
+### Integration tests (Z4-03)
+Tests verify container images and deployed environments:
+```bash
+# Run all (build, start containers, test, tear down)
+./scripts/run-integration-tests.sh
+
+# Run tests only (containers already running on port 8010/8081)
+BACKEND_URL="http://localhost:8010" FRONTEND_URL="http://localhost:8081" \
+  python -m pytest tests/deployment/ -v -m integration
+```
+Tests live in `tests/deployment/`. See `docs/developer.md` for deployed environment test setup.
+
 ## Environment Setup
 
 Copy `backend/.env.example` to `backend/.env` and fill in:
@@ -76,46 +88,126 @@ FastAPI → OpenAI API
 
 **Full conversation context on every turn**: The frontend sends the entire message history (including a system prompt) on each `POST /chat/stream` call. There is no server-side session state for chat.
 
-**Cascade deletes**: All FK relationships use `ondelete="CASCADE"`. Deleting a User removes all their Conversations, Messages, and Collections.
+**Cascade deletes**: All FK relationships use `ondelete="CASCADE"`. Deleting a User removes all their Conversations, Messages, Collections, and LearningTopics.
+
+**Public sharing**: Conversations, Collections, and LearningTopics can be marked `is_public` to enable read-only access via unauthenticated public pages. Shared items have non-sequential UUIDs to prevent enumeration.
+
+**Multi-LLM support**: Users can choose between OpenAI (default) and Gemini for chat. The `POST /chat/stream` endpoint routes to the appropriate AI client (`openai_client.py` or `gemini_client.py`) based on `user.preferred_model`.
+
+**Rate limiting & quotas**: The `limits.py` module enforces per-user monthly token budgets, request rate limits, and conversation limits. `provider_costs.py` tracks spending. `LimitReachedDialog` on frontend notifies when quotas are hit.
+
+**Vite watch config for Windows Docker**: The frontend vite config uses polling with a 2s interval and `awaitWriteFinish` to work around inotify limitations in Docker on Windows; prevents HMR thrashing and state loss.
 
 ## Backend Structure
 
-- `app/main.py` — FastAPI app, CORS, router registration
-- `app/config.py` — env var reads (OAuth credentials, JWT config, URLs)
+### Core infrastructure
+- `app/main.py` — FastAPI app, CORS, router registration, `GET /health`
+- `app/config.py` — env var reads (OAuth credentials, JWT config, URLs, OpenAI/Gemini keys)
 - `app/database.py` — async SQLAlchemy engine + `AsyncSessionLocal` + `Base`
-- `app/models.py` — ORM models: `User`, `Conversation`, `Message`, `Collection`, `ConversationCollection`
+- `app/models.py` — ORM models: `User`, `Conversation`, `Message`, `Collection`, `ConversationCollection`, `LearningTopic`
 - `app/auth.py` — JWT creation/verification; `CurrentUser` dependency type alias
-- `app/routers/auth.py` — OAuth login/callback for Google & GitHub, `/auth/me`, `/auth/logout`
-- `app/routers/chat.py` — `POST /chat/stream` SSE endpoint
-- `alembic/versions/0001_initial_schema.py` — full schema; enums are created idempotently via `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+
+### API routers
+- `app/routers/auth.py` — OAuth login/callback (Google & GitHub), `/auth/me`, `/auth/logout`
+- `app/routers/chat.py` — `POST /chat/stream` SSE streaming (OpenAI or Gemini)
+- `app/routers/conversations.py` — CRUD for conversations + replay tracking
+- `app/routers/feed.py` — feed/activity endpoints
+- `app/routers/collections.py` — CRUD for collections (grouping conversations)
+- `app/routers/users.py` — user profile, preferences, usage tracking
+- `app/routers/help.py` — help/documentation endpoints
+- `app/routers/reports.py` — analytics/reports endpoints
+- `app/routers/learning_topics.py` — learning topics CRUD and public sharing
+
+### AI & utilities
+- `app/openai_client.py` — OpenAI SDK wrapper (streaming, token counting)
+- `app/gemini_client.py` — Gemini API integration
+- `app/export_utils.py` — conversation export (JSON, markdown, etc.)
+- `app/provider_costs.py` — cost calculation for OpenAI/Gemini tokens
+- `app/limits.py` — rate limits, usage quotas, token budgets
+
+### Database
+- `alembic/versions/` — migration files; enums created idempotently via `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN NULL; END $$`
 
 ## Frontend Structure
 
-- `src/App.tsx` — root: wraps in `<AuthProvider>`, renders `<LoginPage>` or `<ChatPage>` based on auth state
-- `src/context/AuthContext.tsx` — React Query-backed auth context; `GET /api/auth/me` on load; `logout()` calls `POST /api/auth/logout`
-- `src/hooks/useChat.ts` — `useChat()` hook (message state) + `streamChatReply()` (SSE fetch logic)
-- `src/types/` — shared TypeScript types (`Message`, `AuthUser`)
-- `src/components/` — UI components (`ChatPage`, `MessageBubble`, `ChatInput`, `TypingIndicator`, `EmptyState`)
-- `src/pages/LoginPage.tsx` — OAuth login buttons
+### Core
+- `src/App.tsx` — root: wraps in `<AuthProvider>` + `<ThemeProvider>`, routes to `LoginPage`, `ChatPage`, etc.
+- `src/main.tsx` — React 18 entry point with React Query `QueryClientProvider`
+
+### Context & hooks
+- `src/context/AuthContext.tsx` — React Query-backed auth; `GET /api/auth/me` on load; logout calls `POST /api/auth/logout`
+- `src/context/ThemeContext.tsx` — light/dark mode state
+- `src/hooks/useChat.ts` — `useChat()` (message state) + `streamChatReply()` (SSE via fetch + ReadableStream)
+
+### Pages & routing
+- `src/pages/LoginPage.tsx` — OAuth login buttons (Google, GitHub)
+- `src/components/ChatPage.tsx` — main chat interface
+- `src/components/LibraryPage.tsx` — saved conversations list/search
+- `src/components/FeedPage.tsx` — activity feed
+- `src/components/ReportsPage.tsx` — analytics/reports
+- `src/components/HelpPage.tsx` — help & documentation
+- `src/components/ConversationDetailPage.tsx` — view/edit saved conversation
+- `src/components/PublicConversationPage.tsx` — publicly shared conversation view (no login)
+- `src/components/PublicCollectionPage.tsx` — publicly shared collection view
+- `src/components/PublicLearningTopicPage.tsx` — publicly shared learning topic
+
+### Components
+- `src/components/MessageBubble.tsx` — message display (user/assistant)
+- `src/components/ChatInput.tsx` — input textarea + send button
+- `src/components/TypingIndicator.tsx` — "..." animation while waiting for reply
+- `src/components/EmptyState.tsx` — no conversations UI
+- `src/components/ReplayMode.tsx` — step-through saved conversation
+- `src/components/TopicReplayMode.tsx` — replay for learning topics
+- `src/components/SaveDialog.tsx` — save/update conversation to library
+- `src/components/HelpChat.tsx` — embedded help chat
+- `src/components/HelpPopup.tsx` — help popup overlay
+- `src/components/ThemeToggle.tsx` — light/dark mode button
+- `src/components/UsageDisplay.tsx` — user's token usage stats
+- `src/components/LimitReachedDialog.tsx` — quota/limit exceeded notification
+
+### API & types
+- `src/api/base.ts` — Axios client, API call helpers
+- `src/api/errors.ts` — error handling
+- `src/types/` — TypeScript types (`Message`, `AuthUser`, `Conversation`, `Collection`, `LearningTopic`, `Reports`, etc.)
+- `src/config/features.ts` — feature flags
 
 ## Data Model
 
 ```
 User ──< Conversation ──< Message
 User ──< Collection
-Conversation >──< Collection  (via ConversationCollection join table)
+Conversation >──< Collection        (via ConversationCollection join table)
+User ──< LearningTopic ──< Message
+LearningTopic >──< Collection        (some topics are grouped in collections)
 ```
 
-All PKs are UUID v4. `Conversation.tags` is a PostgreSQL `ARRAY(String)`. `Conversation.replay_count` (`BigInteger`) tracks how many times replay mode was started.
+- All PKs are UUID v4.
+- `Conversation.tags` — PostgreSQL `ARRAY(String)` for search/filter
+- `Conversation.replay_count` — `BigInteger` tracking replay mode starts
+- `Conversation.is_public` — boolean for public sharing
+- `LearningTopic.is_public` — boolean for public learning topics
+- `Collection.is_public` — boolean for public collections
+- `User.preferred_model` — "openai" or "gemini" (default: openai)
+- Token usage tracked per user for rate limiting and cost reporting
 
-## Story Tracking
+## Story Tracking & Documentation
 
-User stories are in `stories.md`, organized by phase. Requirements are in `requirements.md`. Implementation phases:
+User stories, requirements, and implementation status are tracked in `docs/`:
+- `docs/stories.md` — main user stories by phase
+- `docs/requirements.md` — formal requirements with FR codes
+- `docs/stories2.md`, `docs/chatbot_stories.md`, `docs/learning_stories.md`, etc. — feature-specific stories
+- `docs/deployment_stories.md`, `docs/deployment_requirements.md` — deployment phases (Z4-01..04, etc.)
+- `docs/authorization_stories.md` — public sharing & access control features
+- `docs/developer.md` — development setup, deployment, testing
+
+Implementation phases (from recent commits):
 1. Foundation (INFRA, CHAT) — **done**
-2. Auth & Save (AUTH, SAVE) — AUTH-01 done
-3. Library (LIB) — LIB-01 done, LIB-02 done
-4. Replay Mode (REPLAY) — REPLAY-01 done, REPLAY-02 done, REPLAY-03 done, REPLAY-04 done
-5. Public Sharing (SHARE) — SHARE-01 done, SHARE-02 done
-6. Collections (COL)
-7. Search v2 (SEARCH — pgvector semantic search)
-11. Duplicate & Theme (Phase 11) — THEME-01 done
+2. Auth & Save (AUTH, SAVE) — **done**
+3. Library (LIB) — **done**
+4. Replay Mode (REPLAY) — **done**
+5. Public Sharing (SHARE) — **done** (conversations, collections, learning topics)
+6. Collections (COL) — **in progress** (collections UI visible)
+7. Learning Topics — **in progress** (LearningTopic model, public sharing)
+8. Reports & Analytics — **in progress** (ReportsPage, usage tracking)
+9. Help & Documentation — **in progress** (HelpPage, embedded help chat)
+10. Deployment (Z4) — **in progress** (Docker, integration tests, Azure CI/CD)
