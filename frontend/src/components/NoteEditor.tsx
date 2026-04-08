@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { getApiUrl } from '../api/base'
+import { streamChatReply } from '../hooks/useChat'
+import {
+  SUMMARIZE_SYSTEM_PROMPT,
+  buildSummarizeUserMessageForNote,
+} from '../lib/summarize'
 import type { CreateNotePayload, NoteDetail, UpdateNotePayload } from '../types/note'
+import { SummarizeWithAiPanel } from './SummarizeWithAiPanel'
 
 interface Props {
   noteId: string | null
@@ -52,6 +58,11 @@ export function NoteEditor({ noteId, onClose, onSaved, onDeleted }: Props) {
   const [mobilePane, setMobilePane] = useState<MobilePane>('editor')
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [loadedNoteId, setLoadedNoteId] = useState<string | null>(noteId)
+
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [summaryText, setSummaryText] = useState('')
+  const [summaryStreaming, setSummaryStreaming] = useState(false)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const [draft, setDraft] = useState(blankDraft())
   const [lastSaved, setLastSaved] = useState(blankDraft())
@@ -245,6 +256,30 @@ export function NoteEditor({ noteId, onClose, onSaved, onDeleted }: Props) {
 
   const canSave = Boolean(draft.title.trim() && draft.content.trim())
   const saveDisabled = saveState === 'saving' || !canSave
+  const canSummarize = Boolean(draft.content.trim())
+
+  async function runSummarizeNote() {
+    if (!canSummarize || summaryStreaming) return
+    setSummaryOpen(true)
+    setSummaryError(null)
+    setSummaryText('')
+    setSummaryStreaming(true)
+    const userContent = buildSummarizeUserMessageForNote(draft.title, draft.content)
+    await streamChatReply(
+      {
+        messages: [{ role: 'user', content: userContent }],
+        systemPrompt: SUMMARIZE_SYSTEM_PROMPT,
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+      },
+      (token) => setSummaryText((prev) => prev + token),
+      () => setSummaryStreaming(false),
+      (err) => {
+        setSummaryStreaming(false)
+        setSummaryError(err)
+      },
+    )
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -297,6 +332,14 @@ export function NoteEditor({ noteId, onClose, onSaved, onDeleted }: Props) {
             >
               {draft.is_pinned ? 'Pinned' : 'Pin'}
             </button>
+            <button
+              type="button"
+              onClick={() => void runSummarizeNote()}
+              disabled={!canSummarize || summaryStreaming}
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 hover:bg-violet-100 dark:hover:bg-violet-900/30 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {summaryStreaming ? 'Summarizing…' : 'Summarize with AI'}
+            </button>
             {isExisting && (
               <button
                 type="button"
@@ -324,7 +367,10 @@ export function NoteEditor({ noteId, onClose, onSaved, onDeleted }: Props) {
             <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
           </div>
         ) : (
-          <div className="flex-1 min-h-0 flex flex-col">
+          <div
+            className={`flex min-h-0 flex-1 flex-col ${summaryOpen ? 'md:flex-row' : ''}`}
+          >
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-800">
               <button type="button" onClick={() => applyWrap('**')} className={toolbarBtnClass}>
                 Bold
@@ -453,7 +499,7 @@ export function NoteEditor({ noteId, onClose, onSaved, onDeleted }: Props) {
               </div>
             )}
 
-            <div className="flex-1 min-h-0 grid grid-cols-1 sm:grid-cols-2">
+            <div className="grid min-h-0 flex-1 grid-cols-1 sm:grid-cols-2">
               <div className={`${mobilePane === 'preview' ? 'hidden sm:block' : 'block'} border-r border-gray-200 dark:border-gray-800 min-h-0`}>
                 <textarea
                   ref={textareaRef}
@@ -473,6 +519,16 @@ export function NoteEditor({ noteId, onClose, onSaved, onDeleted }: Props) {
                 </article>
               </div>
             </div>
+            </div>
+            {summaryOpen && (
+              <SummarizeWithAiPanel
+                variant="inset"
+                onClose={() => setSummaryOpen(false)}
+                summaryText={summaryText}
+                isStreaming={summaryStreaming}
+                error={summaryError}
+              />
+            )}
           </div>
         )}
       </section>
