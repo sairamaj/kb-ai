@@ -10,6 +10,7 @@ import { NoteEditor } from './NoteEditor'
 import type { CollectionSummary, CreateCollectionPayload, UpdateCollectionPayload } from '../types/collection'
 import type { ConversationSummary } from '../types/conversation'
 import type { NoteDetail, NoteSummary } from '../types/note'
+import type { UnifiedSearchItem, UnifiedSearchTypeFilter } from '../types/search'
 import type {
   CreateLearningTopicPayload,
   LearningTopicDetail,
@@ -25,6 +26,8 @@ import { SHOW_COLLECTIONS_IN_UI } from '../config/features'
 type LibraryView = 'conversations' | 'notes' | 'collections' | 'learning-topics'
 type SortOption = 'recent' | 'oldest' | 'most_replayed'
 type SearchMode = 'keyword' | 'semantic'
+/** ENH-06: tab-only vs unified /search across conversations + notes */
+type SearchScope = 'tab' | 'all'
 
 const SORT_LABELS: Record<SortOption, string> = {
   recent: 'Most Recent',
@@ -114,6 +117,11 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
 
   const [query, setQuery] = useState('')
   const [searchMode, setSearchMode] = useState<SearchMode>('keyword')
+  const [searchScope, setSearchScope] = useState<SearchScope>('tab')
+  const [unifiedTypeFilter, setUnifiedTypeFilter] = useState<UnifiedSearchTypeFilter>('all')
+  const [unifiedResults, setUnifiedResults] = useState<UnifiedSearchItem[]>([])
+  const [unifiedLoading, setUnifiedLoading] = useState(false)
+  const [unifiedError, setUnifiedError] = useState<string | null>(null)
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [allTags, setAllTags] = useState<string[]>([])
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
@@ -199,6 +207,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   }, [])
 
   useEffect(() => {
+    if (searchScope === 'all') return
     setIsLoading(true)
     setError(null)
     const params = new URLSearchParams()
@@ -221,10 +230,11 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         setError(err instanceof Error ? err.message : 'Failed to load conversations.')
         setIsLoading(false)
       })
-  }, [debouncedQuery, searchMode, selectedTags, selectedCollectionId, sort])
+  }, [debouncedQuery, searchMode, selectedTags, selectedCollectionId, sort, searchScope])
 
   useEffect(() => {
     if (libraryView !== 'notes') return
+    if (searchScope === 'all') return
     setNotesLoading(true)
     setNotesError(null)
     const params = new URLSearchParams()
@@ -244,7 +254,37 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         setNotesError(err instanceof Error ? err.message : 'Failed to load notes.')
         setNotesLoading(false)
       })
-  }, [libraryView, debouncedQuery])
+  }, [libraryView, debouncedQuery, searchScope])
+
+  useEffect(() => {
+    if (searchScope !== 'all') return
+    if (libraryView !== 'conversations' && libraryView !== 'notes') return
+    if (!debouncedQuery.trim()) {
+      setUnifiedResults([])
+      setUnifiedLoading(false)
+      setUnifiedError(null)
+      return
+    }
+    setUnifiedLoading(true)
+    setUnifiedError(null)
+    const params = new URLSearchParams()
+    params.set('q', debouncedQuery.trim())
+    params.set('search_mode', searchMode)
+    params.set('type', unifiedTypeFilter)
+    fetch(getApiUrl(`search?${params.toString()}`), { credentials: 'include' })
+      .then((r) => {
+        if (!r.ok) throw new Error(`Search failed (${r.status})`)
+        return r.json() as Promise<UnifiedSearchItem[]>
+      })
+      .then((data) => {
+        setUnifiedResults(data)
+        setUnifiedLoading(false)
+      })
+      .catch((err: unknown) => {
+        setUnifiedError(err instanceof Error ? err.message : 'Search failed.')
+        setUnifiedLoading(false)
+      })
+  }, [searchScope, libraryView, debouncedQuery, searchMode, unifiedTypeFilter])
 
   useEffect(() => {
     if (!SHOW_COLLECTIONS_IN_UI) {
@@ -1024,6 +1064,167 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     })
   }
 
+  function renderUnifiedSearchResults(): JSX.Element {
+    return (
+      <>
+        {unifiedLoading ? (
+          <div className="flex justify-center py-16">
+            <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+          </div>
+        ) : unifiedError ? (
+          <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+            {unifiedError}
+          </div>
+        ) : !debouncedQuery.trim() ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400 py-12 text-center">
+            Type a search query to find conversations and notes in one list.
+          </p>
+        ) : unifiedResults.length === 0 ? (
+          <div className="flex flex-col items-center py-16 gap-3">
+            <p className="text-gray-500 text-sm">No matching conversations or notes.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-gray-400 dark:text-gray-600 mb-2">
+              {unifiedResults.length} result{unifiedResults.length !== 1 ? 's' : ''}
+            </p>
+            {unifiedResults.map((item) =>
+              item.type === 'conversation' ? (
+                <div
+                  key={`c-${item.id}`}
+                  className="relative group bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:border-gray-400 dark:hover:border-gray-600 rounded-xl transition-colors"
+                >
+                  <button
+                    type="button"
+                    onClick={() => onOpenConversation(item.id)}
+                    className="w-full text-left px-4 py-3.5"
+                  >
+                    <div className="flex items-start justify-between gap-3 pr-16">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] uppercase tracking-wide font-semibold text-indigo-600 dark:text-indigo-400 mb-0.5">
+                          Conversation
+                        </p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate group-hover:text-black dark:group-hover:text-white transition-colors">
+                          {item.title}
+                        </p>
+                        {item.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {item.tags.map((tag) => (
+                              <span
+                                key={tag}
+                                className="text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/60 px-1.5 py-0.5 rounded-full"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-xs text-gray-500">{formatDate(item.updated_at)}</p>
+                        <p className="text-xs text-gray-400 dark:text-gray-600 mt-0.5">
+                          {item.message_count ?? 0} msg{(item.message_count ?? 0) !== 1 ? 's' : ''}
+                        </p>
+                        {searchMode === 'semantic' && item.score != null && (
+                          <p className="text-xs text-emerald-600 dark:text-emerald-500 mt-0.5" title="Similarity score">
+                            {Math.round(item.score * 100)}% match
+                          </p>
+                        )}
+                        {(item.replay_count ?? 0) > 0 && (
+                          <p className="text-xs text-indigo-600 dark:text-indigo-500 mt-0.5" title="Times replayed">
+                            ▶ {item.replay_count}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void togglePin(item.id)
+                    }}
+                    disabled={pinningConvId === item.id}
+                    aria-label={item.is_pinned ? 'Unpin' : 'Pin'}
+                    title={item.is_pinned ? 'Unpin' : 'Pin to top'}
+                    className="absolute top-3 right-9 opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-gray-400 dark:text-gray-600 hover:text-amber-500 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-all disabled:opacity-50"
+                  >
+                    {pinningConvId === item.id ? (
+                      <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin block" />
+                    ) : item.is_pinned ? (
+                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                      </svg>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeleteTargetId(item.id)
+                    }}
+                    aria-label="Delete conversation"
+                    className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-gray-400 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  key={`n-${item.id}`}
+                  type="button"
+                  onClick={() => openExistingNoteEditor(item.id)}
+                  className="relative text-left w-full bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:border-gray-400 dark:hover:border-gray-600 rounded-xl px-4 py-3.5 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] uppercase tracking-wide font-semibold text-amber-700 dark:text-amber-500 mb-0.5">
+                        Note
+                      </p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{item.title}</p>
+                      {item.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          {item.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/60 px-1.5 py-0.5 rounded-full"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {item.content_preview && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 line-clamp-2">{item.content_preview}</p>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs text-gray-500">{formatDate(item.updated_at)}</p>
+                      {searchMode === 'semantic' && item.score != null && (
+                        <p className="text-xs text-emerald-600 dark:text-emerald-500 mt-0.5" title="Similarity score">
+                          {Math.round(item.score * 100)}% match
+                        </p>
+                      )}
+                      {item.is_pinned && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Pinned</p>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              )
+            )}
+          </div>
+        )}
+      </>
+    )
+  }
+
   const hasFilter =
     debouncedQuery.length > 0 ||
     selectedTags.length > 0 ||
@@ -1159,11 +1360,15 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
             <input
               type="text"
               placeholder={
-                libraryView === 'notes'
-                  ? 'Search notes by title or content…'
-                  : searchMode === 'semantic'
-                    ? 'Search by meaning…'
-                    : 'Search by title or content…'
+                searchScope === 'all'
+                  ? searchMode === 'semantic'
+                    ? 'Search conversations and notes by meaning…'
+                    : 'Search conversations and notes by keyword…'
+                  : libraryView === 'notes'
+                    ? 'Search notes by title or content…'
+                    : searchMode === 'semantic'
+                      ? 'Search by meaning…'
+                      : 'Search by title or content…'
               }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -1180,7 +1385,49 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
             )}
           </div>
 
-          {libraryView === 'conversations' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-500">Search in:</span>
+            <div className="flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg p-0.5">
+              <button
+                type="button"
+                onClick={() => setSearchScope('tab')}
+                className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
+                  searchScope === 'tab'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                This tab
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchScope('all')}
+                className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
+                  searchScope === 'all'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                All
+              </button>
+            </div>
+            {searchScope === 'all' && (
+              <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
+                <span className="text-gray-500">Types</span>
+                <select
+                  value={unifiedTypeFilter}
+                  onChange={(e) => setUnifiedTypeFilter(e.target.value as UnifiedSearchTypeFilter)}
+                  className="text-xs bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 text-gray-700 dark:text-gray-300 focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="all">All</option>
+                  <option value="conversation">Conversations</option>
+                  <option value="note">Notes</option>
+                </select>
+              </label>
+            )}
+          </div>
+
+          {(libraryView === 'conversations' || (libraryView === 'notes' && searchScope === 'all')) && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500">Search:</span>
               <div className="flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg p-0.5">
@@ -1202,7 +1449,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
             </div>
           )}
 
-          {libraryView === 'conversations' && (
+          {libraryView === 'conversations' && searchScope !== 'all' && (
           <div className="flex flex-wrap items-center gap-2">
             {/* Sort control */}
             <div className="flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg p-0.5">
@@ -1412,6 +1659,10 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       {libraryView === 'conversations' && (
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="max-w-3xl mx-auto">
+          {searchScope === 'all' ? (
+            renderUnifiedSearchResults()
+          ) : (
+            <>
           {isLoading ? (
             <div className="flex justify-center py-16">
               <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
@@ -1573,6 +1824,8 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                 </div>
               ))}
             </div>
+          )}
+            </>
           )}
         </div>
       </div>
@@ -1761,7 +2014,9 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
               New note
             </button>
           </div>
-          {notesLoading ? (
+          {searchScope === 'all' ? (
+            renderUnifiedSearchResults()
+          ) : notesLoading ? (
             <div className="flex justify-center py-16">
               <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
             </div>

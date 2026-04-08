@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import CurrentUser
 from app.database import get_db
 from app.models import Note, User, Visibility
+from app.openai_client import embed_text
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -101,6 +102,10 @@ def _parse_note_id(value: str) -> uuid.UUID:
         raise HTTPException(status_code=404, detail="Note not found")
 
 
+def _text_for_note_embedding(title: str, tags: list[str], content: str) -> str:
+    return " ".join([title or "", " ".join(tags or []), content or ""]).strip()
+
+
 def _content_preview(content: str, max_len: int = 150) -> str:
     t = (content or "").replace("\n", " ").strip()
     if len(t) <= max_len:
@@ -158,6 +163,11 @@ async def create_note(
     user = await db.get(User, owner_uuid)
     if user is not None:
         user.lifetime_notes_created = (user.lifetime_notes_created or 0) + 1
+
+    await db.flush()
+    emb = await embed_text(_text_for_note_embedding(note.title, note.tags or [], note.content))
+    if emb is not None:
+        note.embedding = emb
 
     await db.commit()
     await db.refresh(note)
@@ -234,6 +244,11 @@ async def update_note(
         note.visibility = Visibility(body.visibility)
     if body.is_pinned is not None:
         note.is_pinned = body.is_pinned
+
+    if any(x is not None for x in (body.title, body.content, body.tags)):
+        emb = await embed_text(_text_for_note_embedding(note.title, note.tags or [], note.content))
+        if emb is not None:
+            note.embedding = emb
 
     await db.commit()
     await db.refresh(note)
