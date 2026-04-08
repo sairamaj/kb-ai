@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth import CurrentUser
 from app.database import get_db
+from app.flashcard_generation import generate_flashcards_from_source
 from app.limits import PRO_LEARNING_TOPIC_LIMIT, STARTER_LEARNING_TOPIC_LIMIT
 from app.models import (
     Conversation,
@@ -81,6 +82,11 @@ LearningTopicItem = Annotated[
 ]
 
 
+class FlashcardItemResponse(BaseModel):
+    question: str
+    answer: str
+
+
 class LearningTopicDetailResponse(BaseModel):
     id: str
     title: str
@@ -90,6 +96,7 @@ class LearningTopicDetailResponse(BaseModel):
     updated_at: str
     items: list[LearningTopicItem]
     conversations: list[LearningTopicConversationItem]
+    flashcards: list[FlashcardItemResponse] = Field(default_factory=list)
 
 
 class CreateLearningTopicRequest(BaseModel):
@@ -356,6 +363,20 @@ async def _build_topic_replay_sequence(
     return out
 
 
+async def _topic_source_text_for_flashcards(db: AsyncSession, topic_uuid: uuid.UUID) -> str:
+    """Plain-text bundle of topic replay content (conversations + notes in order) for flashcard generation."""
+    items = await _build_topic_replay_sequence(db, topic_uuid, access="owner")
+    chunks: list[str] = []
+    for item in items:
+        if item.type == "message":
+            chunks.append(
+                f"## Conversation: {item.conversation_title}\n[{item.message.role}]\n{item.message.content}\n",
+            )
+        else:
+            chunks.append(f"## Note: {item.title}\n{item.content}\n")
+    return "\n".join(chunks)
+
+
 async def _compact_topic_positions(db: AsyncSession, topic: LearningTopic, topic_uuid: uuid.UUID) -> None:
     conv_members = (
         await db.execute(
@@ -473,6 +494,17 @@ async def _topic_detail_response(
                 )
             )
 
+    flashcards_out: list[FlashcardItemResponse] = []
+    raw_fc = topic.flashcards
+    if isinstance(raw_fc, list):
+        for row in raw_fc:
+            if not isinstance(row, dict):
+                continue
+            q = str(row.get("question", "")).strip()
+            a = str(row.get("answer", "")).strip()
+            if q and a:
+                flashcards_out.append(FlashcardItemResponse(question=q, answer=a))
+
     return LearningTopicDetailResponse(
         id=str(topic.id),
         title=topic.title,
@@ -482,6 +514,7 @@ async def _topic_detail_response(
         updated_at=topic.updated_at.isoformat(),
         items=items,
         conversations=legacy_conversations,
+        flashcards=flashcards_out,
     )
 
 
@@ -820,6 +853,70 @@ async def get_learning_topic(
 ) -> LearningTopicDetailResponse:
     owner_uuid = uuid.UUID(current_user.sub)
     topic_uuid = _parse_topic_uuid(topic_id)
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.post("/{topic_id}/flashcards/generate", response_model=LearningTopicDetailResponse)
+async def generate_learning_topic_flashcards(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """ENH-02: One AI call with structured output; replaces any existing flashcards."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    source = await _topic_source_text_for_flashcards(db, topic_uuid)
+    cards = await generate_flashcards_from_source(topic_title=topic.title, source_material=source)
+    topic.flashcards = cards
+    topic.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.delete("/{topic_id}/flashcards", response_model=LearningTopicDetailResponse)
+async def discard_learning_topic_flashcards(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """ENH-02: Remove stored flashcards for the topic."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    topic.flashcards = None
+    topic.updated_at = datetime.now(timezone.utc)
+    await db.commit()
 
     detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
     if detail is None:

@@ -9,6 +9,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -190,6 +191,7 @@ class LearningTopic(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    flashcards: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     owner: Mapped["User"] = relationship("User", back_populates="learning_topics")
     conversation_links: Mapped[list["LearningTopicConversation"]] = relationship(

@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
 import { USER_ROLE_LABELS } from '../types/auth'
 import { ThemeToggle } from './ThemeToggle'
+import { FlashcardMode } from './FlashcardMode'
 import { TopicReplayMode } from './TopicReplayMode'
 import { UsageDisplay } from './UsageDisplay'
 import { NoteEditor } from './NoteEditor'
@@ -187,6 +188,10 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [reorderTopicConvError, setReorderTopicConvError] = useState<string | null>(null)
   const [draggingTopicItemKey, setDraggingTopicItemKey] = useState<string | null>(null)
   const [showTopicReplay, setShowTopicReplay] = useState(false)
+  const [showFlashcardMode, setShowFlashcardMode] = useState(false)
+  const [generatingFlashcards, setGeneratingFlashcards] = useState(false)
+  const [discardingFlashcards, setDiscardingFlashcards] = useState(false)
+  const [flashcardActionError, setFlashcardActionError] = useState<string | null>(null)
 
   const [showDeleteAccount, setShowDeleteAccount] = useState(false)
   const [isDeletingAccount, setIsDeletingAccount] = useState(false)
@@ -374,6 +379,10 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     setReorderTopicConvError(null)
     setDraggingTopicItemKey(null)
     setShowTopicReplay(false)
+    setShowFlashcardMode(false)
+    setFlashcardActionError(null)
+    setGeneratingFlashcards(false)
+    setDiscardingFlashcards(false)
   }
 
   async function loadTopicDetail(topicId: string) {
@@ -428,6 +437,8 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     setSelectedTopicId(topicId)
     setTopicDetail(null)
     setShowTopicReplay(false)
+    setShowFlashcardMode(false)
+    setFlashcardActionError(null)
     void loadTopicDetail(topicId)
   }
 
@@ -663,6 +674,66 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       setReorderTopicConvError(err instanceof Error ? err.message : 'Reorder failed.')
     } finally {
       setReorderingTopicConvs(false)
+    }
+  }
+
+  async function generateTopicFlashcards() {
+    if (!selectedTopicId) return
+    setGeneratingFlashcards(true)
+    setFlashcardActionError(null)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/flashcards/generate`), {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "This topic wasn't found.",
+            forbidden: "You can't generate flashcards for this topic.",
+          }),
+        )
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setLearningTopics((prev) =>
+        prev.map((t) => (t.id === selectedTopicId ? { ...t, updated_at: data.updated_at } : t)),
+      )
+    } catch (err) {
+      setFlashcardActionError(err instanceof Error ? err.message : 'Flashcard generation failed.')
+    } finally {
+      setGeneratingFlashcards(false)
+    }
+  }
+
+  async function discardTopicFlashcards() {
+    if (!selectedTopicId) return
+    setDiscardingFlashcards(true)
+    setFlashcardActionError(null)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/flashcards`), {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "This topic wasn't found.",
+            forbidden: "You can't update this topic.",
+          }),
+        )
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setLearningTopics((prev) =>
+        prev.map((t) => (t.id === selectedTopicId ? { ...t, updated_at: data.updated_at } : t)),
+      )
+    } catch (err) {
+      setFlashcardActionError(err instanceof Error ? err.message : "Couldn't discard flashcards.")
+    } finally {
+      setDiscardingFlashcards(false)
     }
   }
 
@@ -2197,6 +2268,41 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                       >
                         Replay topic
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => void generateTopicFlashcards()}
+                        disabled={
+                          topicItemsOrLegacy(topicDetail).length === 0 || generatingFlashcards || discardingFlashcards
+                        }
+                        className="text-xs px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 font-medium hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors w-fit disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {generatingFlashcards
+                          ? 'Generating…'
+                          : (topicDetail.flashcards?.length ?? 0) > 0
+                            ? 'Regenerate flashcards'
+                            : 'Generate flashcards'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowFlashcardMode(true)}
+                        disabled={(topicDetail.flashcards?.length ?? 0) === 0 || generatingFlashcards}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-medium transition-colors w-fit disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Practice flashcards
+                        {(topicDetail.flashcards?.length ?? 0) > 0 && (
+                          <span className="ml-1 opacity-90">({topicDetail.flashcards?.length})</span>
+                        )}
+                      </button>
+                      {(topicDetail.flashcards?.length ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => void discardTopicFlashcards()}
+                          disabled={discardingFlashcards || generatingFlashcards}
+                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 font-medium hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors w-fit disabled:opacity-40"
+                        >
+                          {discardingFlashcards ? 'Discarding…' : 'Discard flashcards'}
+                        </button>
+                      )}
                       {topicItemsOrLegacy(topicDetail).length > 0 && (
                         <p className="text-xs text-gray-500 dark:text-gray-500 flex items-center gap-2">
                           <span>Drag the handle or use arrows to set replay order.</span>
@@ -2210,6 +2316,11 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                       )}
                     </div>
                   </div>
+                  {flashcardActionError && (
+                    <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                      {flashcardActionError}
+                    </p>
+                  )}
                   {removeTopicConvError && (
                     <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
                       {removeTopicConvError}
@@ -2576,6 +2687,17 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
           onExit={() => {
             setShowTopicReplay(false)
             void loadTopicDetail(selectedTopicId)
+          }}
+        />
+      )}
+
+      {libraryView === 'learning-topics' && showFlashcardMode && topicDetail && (
+        <FlashcardMode
+          topicTitle={topicDetail.title}
+          cards={topicDetail.flashcards ?? []}
+          onExit={() => {
+            setShowFlashcardMode(false)
+            if (selectedTopicId) void loadTopicDetail(selectedTopicId)
           }}
         />
       )}

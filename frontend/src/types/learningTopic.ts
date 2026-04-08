@@ -49,6 +49,12 @@ export interface LearningTopicItemNote {
 
 export type LearningTopicItem = LearningTopicItemConversation | LearningTopicItemNote
 
+/** ENH-02: AI-generated Q&A pairs stored on the topic. */
+export interface LearningTopicFlashcard {
+  question: string
+  answer: string
+}
+
 export interface LearningTopicDetail {
   id: string
   title: string
@@ -59,6 +65,8 @@ export interface LearningTopicDetail {
   /** Unified position-ordered members (conversations and notes). */
   items?: LearningTopicItem[]
   conversations: LearningTopicConversationMember[]
+  /** Saved flashcards; empty array if none. */
+  flashcards?: LearningTopicFlashcard[]
 }
 
 export interface CreateLearningTopicPayload {
