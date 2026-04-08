@@ -6,8 +6,10 @@ import { USER_ROLE_LABELS } from '../types/auth'
 import { ThemeToggle } from './ThemeToggle'
 import { TopicReplayMode } from './TopicReplayMode'
 import { UsageDisplay } from './UsageDisplay'
+import { NoteEditor } from './NoteEditor'
 import type { CollectionSummary, CreateCollectionPayload, UpdateCollectionPayload } from '../types/collection'
 import type { ConversationSummary } from '../types/conversation'
+import type { NoteDetail, NoteSummary } from '../types/note'
 import type {
   CreateLearningTopicPayload,
   LearningTopicDetail,
@@ -19,7 +21,7 @@ import { getApiUrl } from '../api/base'
 import { parseJsonSafe, userFacingApiError } from '../api/errors'
 import { SHOW_COLLECTIONS_IN_UI } from '../config/features'
 
-type LibraryView = 'conversations' | 'collections' | 'learning-topics'
+type LibraryView = 'conversations' | 'notes' | 'collections' | 'learning-topics'
 type SortOption = 'recent' | 'oldest' | 'most_replayed'
 type SearchMode = 'keyword' | 'semantic'
 
@@ -56,7 +58,7 @@ function readInitialLibraryView(): LibraryView {
     if (readStoredLearningTopicId()) return 'learning-topics'
     const v = sessionStorage.getItem(SESSION_LIBRARY_VIEW) as LibraryView | null
     if (v === 'collections' && !SHOW_COLLECTIONS_IN_UI) return 'conversations'
-    if (v === 'conversations' || v === 'collections' || v === 'learning-topics') return v
+    if (v === 'conversations' || v === 'notes' || v === 'collections' || v === 'learning-topics') return v
   } catch {
     /* ignore */
   }
@@ -97,6 +99,11 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notes, setNotes] = useState<NoteSummary[]>([])
+  const [notesLoading, setNotesLoading] = useState(false)
+  const [notesError, setNotesError] = useState<string | null>(null)
+  const [showNoteEditor, setShowNoteEditor] = useState(false)
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null)
   const [sort, setSort] = useState<SortOption>(
     () => (sessionStorage.getItem(SESSION_KEY) as SortOption | null) ?? 'recent',
   )
@@ -190,6 +197,29 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         setIsLoading(false)
       })
   }, [debouncedQuery, searchMode, selectedTags, selectedCollectionId, sort])
+
+  useEffect(() => {
+    if (libraryView !== 'notes') return
+    setNotesLoading(true)
+    setNotesError(null)
+    const params = new URLSearchParams()
+    if (debouncedQuery) params.set('q', debouncedQuery)
+    params.set('pinned_first', 'true')
+
+    fetch(getApiUrl(`notes?${params.toString()}`), { credentials: 'include' })
+      .then((r) => {
+        if (!r.ok) throw new Error(`Failed to load notes (${r.status})`)
+        return r.json() as Promise<NoteSummary[]>
+      })
+      .then((data) => {
+        setNotes(data)
+        setNotesLoading(false)
+      })
+      .catch((err: unknown) => {
+        setNotesError(err instanceof Error ? err.message : 'Failed to load notes.')
+        setNotesLoading(false)
+      })
+  }, [libraryView, debouncedQuery])
 
   useEffect(() => {
     if (!SHOW_COLLECTIONS_IN_UI) {
@@ -721,6 +751,45 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     setSelectedCollectionId(null)
   }
 
+  function openNewNoteEditor() {
+    setActiveNoteId(null)
+    setShowNoteEditor(true)
+  }
+
+  function openExistingNoteEditor(noteId: string) {
+    setActiveNoteId(noteId)
+    setShowNoteEditor(true)
+  }
+
+  function handleNoteSaved(note: NoteDetail, isNew: boolean) {
+    const previewSource = note.content.replace(/\s+/g, ' ').trim()
+    const summary: NoteSummary = {
+      id: note.id,
+      title: note.title,
+      tags: note.tags ?? [],
+      content_preview: previewSource.length > 150 ? `${previewSource.slice(0, 149)}…` : previewSource,
+      visibility: note.visibility,
+      is_pinned: note.is_pinned,
+      updated_at: note.updated_at,
+    }
+    function sortNotes(items: NoteSummary[]) {
+      return [...items].sort((a, b) => {
+        if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1
+        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      })
+    }
+    setNotes((prev) => {
+      if (isNew || !prev.some((n) => n.id === note.id)) {
+        return sortNotes([summary, ...prev])
+      }
+      return sortNotes(prev.map((n) => (n.id === note.id ? summary : n)))
+    })
+  }
+
+  function handleNoteDeleted(noteId: string) {
+    setNotes((prev) => prev.filter((n) => n.id !== noteId))
+  }
+
   async function addConversationToCollection(convId: string, collectionId: string) {
     setCollectionAction({ convId, collectionId })
     try {
@@ -831,6 +900,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     (SHOW_COLLECTIONS_IN_UI && selectedCollectionId !== null)
 
   return (
+    <>
     <div className="flex flex-col h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
@@ -913,6 +983,16 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
             </button>
           )}
           <button
+            onClick={() => setLibraryView('notes')}
+            className={`text-left px-4 py-2.5 text-sm font-medium transition-colors ${
+              libraryView === 'notes'
+                ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 border-r-2 border-indigo-500'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
+            }`}
+          >
+            Notes
+          </button>
+          <button
             onClick={() => setLibraryView('learning-topics')}
             className={`text-left px-4 py-2.5 text-sm font-medium transition-colors ${
               libraryView === 'learning-topics'
@@ -926,8 +1006,8 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
 
         {/* Main content */}
         <div className="flex-1 flex flex-col min-w-0">
-      {/* Search + tag filter bar — only when viewing conversations */}
-      {libraryView === 'conversations' && (
+      {/* Search + tag filter bar */}
+      {(libraryView === 'conversations' || libraryView === 'notes') && (
       <div className="px-4 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div className="max-w-3xl mx-auto space-y-3">
           {/* Search input */}
@@ -948,7 +1028,13 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
             </svg>
             <input
               type="text"
-              placeholder={searchMode === 'semantic' ? 'Search by meaning…' : 'Search by title or content…'}
+              placeholder={
+                libraryView === 'notes'
+                  ? 'Search notes by title or content…'
+                  : searchMode === 'semantic'
+                    ? 'Search by meaning…'
+                    : 'Search by title or content…'
+              }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg pl-9 pr-9 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 transition-colors"
@@ -964,28 +1050,29 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
             )}
           </div>
 
-          {/* Search mode: Keyword vs Semantic */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Search:</span>
-            <div className="flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg p-0.5">
-              {(['keyword', 'semantic'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setSearchMode(mode)}
-                  className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
-                    searchMode === mode
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                  }`}
-                >
-                  {SEARCH_MODE_LABELS[mode]}
-                </button>
-              ))}
+          {libraryView === 'conversations' && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Search:</span>
+              <div className="flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg p-0.5">
+                {(['keyword', 'semantic'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setSearchMode(mode)}
+                    className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
+                      searchMode === mode
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    {SEARCH_MODE_LABELS[mode]}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Sort + tag filter row */}
+          {libraryView === 'conversations' && (
           <div className="flex flex-wrap items-center gap-2">
             {/* Sort control */}
             <div className="flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg p-0.5">
@@ -1051,6 +1138,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
               </>
             )}
           </div>
+          )}
         </div>
       </div>
       )}
@@ -1523,6 +1611,87 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                 </div>
                 )
               })}
+            </div>
+          )}
+        </div>
+      </div>
+      )}
+
+      {/* Notes view */}
+      {libraryView === 'notes' && (
+      <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="max-w-3xl mx-auto space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Notes</h2>
+            <button
+              type="button"
+              onClick={openNewNoteEditor}
+              className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+            >
+              New note
+            </button>
+          </div>
+          {notesLoading ? (
+            <div className="flex justify-center py-16">
+              <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+            </div>
+          ) : notesError ? (
+            <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+              {notesError}
+            </div>
+          ) : notes.length === 0 ? (
+            <div className="flex flex-col items-center py-16 gap-3">
+              <p className="text-gray-500 text-sm">
+                {debouncedQuery ? 'No notes match your search.' : 'No notes yet.'}
+              </p>
+              {!debouncedQuery && (
+                <button
+                  type="button"
+                  onClick={openNewNoteEditor}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+                >
+                  New note
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-gray-400 dark:text-gray-600 mb-2">
+                {notes.length} note{notes.length !== 1 ? 's' : ''}
+              </p>
+              {notes.map((note) => (
+                <button
+                  key={note.id}
+                  type="button"
+                  onClick={() => openExistingNoteEditor(note.id)}
+                  className="relative text-left w-full bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:border-gray-400 dark:hover:border-gray-600 rounded-xl px-4 py-3.5 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{note.title}</p>
+                      {note.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          {note.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/60 px-1.5 py-0.5 rounded-full"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 line-clamp-2">{note.content_preview}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs text-gray-500">{formatDate(note.updated_at)}</p>
+                      {note.is_pinned && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Pinned</p>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -2242,5 +2411,14 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         </div>
       </div>
     </div>
+    {showNoteEditor && (
+      <NoteEditor
+        noteId={activeNoteId}
+        onClose={() => setShowNoteEditor(false)}
+        onSaved={handleNoteSaved}
+        onDeleted={handleNoteDeleted}
+      />
+    )}
+    </>
   )
 }

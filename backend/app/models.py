@@ -71,6 +71,8 @@ class User(Base):
     lifetime_collections_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # TOPIC-11: Lifetime count of learning topics created (Starter cap); never decremented on delete.
     lifetime_learning_topics_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # NB-01: Lifetime count of notes created; never decremented on delete.
+    lifetime_notes_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # REP-04: Last time the user performed an authenticated action (e.g. /auth/me).
     last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -80,6 +82,7 @@ class User(Base):
     conversations: Mapped[list["Conversation"]] = relationship("Conversation", back_populates="owner", cascade="all, delete-orphan")
     collections: Mapped[list["Collection"]] = relationship("Collection", back_populates="owner", cascade="all, delete-orphan")
     learning_topics: Mapped[list["LearningTopic"]] = relationship("LearningTopic", back_populates="owner", cascade="all, delete-orphan")
+    notes: Mapped[list["Note"]] = relationship("Note", back_populates="owner", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("oauth_provider", "oauth_sub", name="uq_user_provider_sub"),
@@ -229,3 +232,31 @@ class LearningTopicConversation(Base):
     __table_args__ = (
         UniqueConstraint("learning_topic_id", "conversation_id", name="uq_learning_topic_conversation"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Note
+# ---------------------------------------------------------------------------
+
+
+class Note(Base):
+    __tablename__ = "notes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(String(64)), nullable=False, default=list)
+    visibility: Mapped[str] = mapped_column(Enum(Visibility, name="visibility_enum"), nullable=False, default=Visibility.private)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    owner: Mapped["User"] = relationship("User", back_populates="notes")
