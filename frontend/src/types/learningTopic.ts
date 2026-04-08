@@ -25,6 +25,30 @@ export interface LearningTopicConversationMember {
   updated_at: string
 }
 
+export interface LearningTopicItemConversation {
+  type: 'conversation'
+  conversation_id: string
+  position: number
+  title: string
+  model: string
+  tags: string[]
+  replay_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface LearningTopicItemNote {
+  type: 'note'
+  note_id: string
+  position: number
+  title: string
+  content_preview: string
+  tags: string[]
+  updated_at: string
+}
+
+export type LearningTopicItem = LearningTopicItemConversation | LearningTopicItemNote
+
 export interface LearningTopicDetail {
   id: string
   title: string
@@ -32,6 +56,8 @@ export interface LearningTopicDetail {
   visibility: 'public' | 'private'
   created_at: string
   updated_at: string
+  /** Unified position-ordered members (conversations and notes). */
+  items?: LearningTopicItem[]
   conversations: LearningTopicConversationMember[]
 }
 
@@ -86,6 +112,10 @@ export interface ReorderLearningTopicConversationsPayload {
   conversation_ids: string[]
 }
 
+export interface ReorderLearningTopicItemsPayload {
+  items: { type: 'conversation' | 'note'; id: string }[]
+}
+
 export interface TopicReplayMessagePayload {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -93,16 +123,26 @@ export interface TopicReplayMessagePayload {
   created_at: string
 }
 
-export interface TopicReplayEntry {
+export interface TopicReplayMessageEntry {
+  type: 'message'
   conversation_id: string
   conversation_title: string
   message: TopicReplayMessagePayload
 }
 
+export interface TopicReplayNoteEntry {
+  type: 'note'
+  note_id: string
+  title: string
+  content: string
+}
+
+export type TopicReplayEntry = TopicReplayMessageEntry | TopicReplayNoteEntry
+
 export interface TopicReplayResponse {
   topic_id: string
   topic_title: string
-  total_messages: number
+  total_items: number
   items: TopicReplayEntry[]
 }
 

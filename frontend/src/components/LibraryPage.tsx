@@ -13,8 +13,9 @@ import type { NoteDetail, NoteSummary } from '../types/note'
 import type {
   CreateLearningTopicPayload,
   LearningTopicDetail,
+  LearningTopicItem,
   LearningTopicListItem,
-  ReorderLearningTopicConversationsPayload,
+  ReorderLearningTopicItemsPayload,
   UpdateLearningTopicPayload,
 } from '../types/learningTopic'
 import { getApiUrl } from '../api/base'
@@ -43,6 +44,25 @@ const SESSION_KEY = 'kb_library_sort'
 const SESSION_LIBRARY_VIEW = 'kb_library_view'
 const SESSION_LEARNING_TOPIC_ID = 'kb_learning_topic_id'
 const TOPIC_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function learningTopicItemKey(item: LearningTopicItem): string {
+  return item.type === 'conversation' ? `c:${item.conversation_id}` : `n:${item.note_id}`
+}
+
+function topicItemsOrLegacy(detail: LearningTopicDetail): LearningTopicItem[] {
+  if (detail.items != null && detail.items.length > 0) return detail.items
+  return detail.conversations.map((c) => ({
+    type: 'conversation' as const,
+    conversation_id: c.conversation_id,
+    position: c.position,
+    title: c.title,
+    model: c.model,
+    tags: c.tags,
+    replay_count: c.replay_count,
+    created_at: c.created_at,
+    updated_at: c.updated_at,
+  }))
+}
 
 function readStoredLearningTopicId(): string | null {
   try {
@@ -146,13 +166,18 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [topicDetailLoading, setTopicDetailLoading] = useState(false)
   const [topicDetailError, setTopicDetailError] = useState<string | null>(null)
   const [showAddTopicConvModal, setShowAddTopicConvModal] = useState(false)
+  const [topicAddModalTab, setTopicAddModalTab] = useState<'conversations' | 'notes'>('conversations')
+  const [notesForTopicModal, setNotesForTopicModal] = useState<NoteSummary[]>([])
+  const [notesForTopicModalLoading, setNotesForTopicModalLoading] = useState(false)
   const [addTopicConvError, setAddTopicConvError] = useState<string | null>(null)
   const [addingTopicConvId, setAddingTopicConvId] = useState<string | null>(null)
+  const [addingTopicNoteId, setAddingTopicNoteId] = useState<string | null>(null)
   const [removingTopicConvId, setRemovingTopicConvId] = useState<string | null>(null)
+  const [removingTopicNoteId, setRemovingTopicNoteId] = useState<string | null>(null)
   const [removeTopicConvError, setRemoveTopicConvError] = useState<string | null>(null)
   const [reorderingTopicConvs, setReorderingTopicConvs] = useState(false)
   const [reorderTopicConvError, setReorderTopicConvError] = useState<string | null>(null)
-  const [draggingTopicConvId, setDraggingTopicConvId] = useState<string | null>(null)
+  const [draggingTopicItemKey, setDraggingTopicItemKey] = useState<string | null>(null)
   const [showTopicReplay, setShowTopicReplay] = useState(false)
 
   const [showDeleteAccount, setShowDeleteAccount] = useState(false)
@@ -281,6 +306,17 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     void loadLearningTopicsList()
   }, [libraryView, loadLearningTopicsList])
 
+  useEffect(() => {
+    if (!showAddTopicConvModal) return
+    setTopicAddModalTab('conversations')
+    setNotesForTopicModalLoading(true)
+    fetch(getApiUrl('notes?pinned_first=true'), { credentials: 'include' })
+      .then((r) => (r.ok ? (r.json() as Promise<NoteSummary[]>) : Promise.resolve([])))
+      .then(setNotesForTopicModal)
+      .catch(() => setNotesForTopicModal([]))
+      .finally(() => setNotesForTopicModalLoading(false))
+  }, [showAddTopicConvModal])
+
   function closeTopicDetail() {
     try {
       sessionStorage.removeItem(SESSION_LEARNING_TOPIC_ID)
@@ -296,7 +332,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     setRemoveTopicConvError(null)
     setReorderingTopicConvs(false)
     setReorderTopicConvError(null)
-    setDraggingTopicConvId(null)
+    setDraggingTopicItemKey(null)
     setShowTopicReplay(false)
   }
 
@@ -461,14 +497,103 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     }
   }
 
-  async function submitReorderTopicConversations(conversationIds: string[]) {
+  async function submitAddNoteToTopic(noteId: string) {
+    if (!selectedTopicId) return
+    setAddingTopicNoteId(noteId)
+    setAddTopicConvError(null)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/notes`), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note_id: noteId }),
+      })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "That note wasn't found.",
+            conflict: 'That note is already in this topic.',
+            forbidden: "You can't add that note.",
+          }),
+        )
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setReorderTopicConvError(null)
+      setLearningTopics((prev) =>
+        prev.map((t) =>
+          t.id === selectedTopicId
+            ? {
+                ...t,
+                conversation_count: data.conversations.length,
+                updated_at: data.updated_at,
+              }
+            : t,
+        ),
+      )
+      setShowAddTopicConvModal(false)
+    } catch (err) {
+      setAddTopicConvError(err instanceof Error ? err.message : 'Add failed.')
+    } finally {
+      setAddingTopicNoteId(null)
+    }
+  }
+
+  async function submitRemoveNoteFromTopic(noteId: string) {
+    if (!selectedTopicId) return
+    setRemovingTopicNoteId(noteId)
+    setRemoveTopicConvError(null)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/notes/${noteId}`), {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "That note isn't in this topic.",
+            forbidden: "You can't remove that note.",
+          }),
+        )
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setRemoveTopicConvError(null)
+      setReorderTopicConvError(null)
+      setLearningTopics((prev) =>
+        prev.map((t) =>
+          t.id === selectedTopicId
+            ? {
+                ...t,
+                conversation_count: data.conversations.length,
+                updated_at: data.updated_at,
+              }
+            : t,
+        ),
+      )
+    } catch (err) {
+      setRemoveTopicConvError(err instanceof Error ? err.message : 'Remove failed.')
+    } finally {
+      setRemovingTopicNoteId(null)
+    }
+  }
+
+  async function submitUnifiedTopicReorder(orderedItems: LearningTopicItem[]) {
     if (!selectedTopicId) return
     setReorderingTopicConvs(true)
     setReorderTopicConvError(null)
     try {
-      const body: ReorderLearningTopicConversationsPayload = { conversation_ids: conversationIds }
-      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/order`), {
-        method: 'PATCH',
+      const body: ReorderLearningTopicItemsPayload = {
+        items: orderedItems.map((it) =>
+          it.type === 'conversation'
+            ? { type: 'conversation', id: it.conversation_id }
+            : { type: 'note', id: it.note_id },
+        ),
+      }
+      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/reorder`), {
+        method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -501,45 +626,50 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     }
   }
 
-  function moveTopicConversation(fromIndex: number, toIndex: number) {
-    if (!topicDetail || reorderingTopicConvs || removingTopicConvId) return
-    const n = topicDetail.conversations.length
+  function moveTopicItem(fromIndex: number, toIndex: number) {
+    if (!topicDetail || reorderingTopicConvs || removingTopicConvId || removingTopicNoteId) return
+    const items = topicItemsOrLegacy(topicDetail)
+    const n = items.length
     if (fromIndex < 0 || fromIndex >= n || toIndex < 0 || toIndex >= n || fromIndex === toIndex) return
-    const ids = topicDetail.conversations.map((c) => c.conversation_id)
-    const [moved] = ids.splice(fromIndex, 1)
-    ids.splice(toIndex, 0, moved)
-    void submitReorderTopicConversations(ids)
+    const next = [...items]
+    const [moved] = next.splice(fromIndex, 1)
+    next.splice(toIndex, 0, moved)
+    void submitUnifiedTopicReorder(next)
   }
 
-  function handleTopicConvDragStart(e: DragEvent, conversationId: string) {
-    if (reorderingTopicConvs || removingTopicConvId) {
+  function handleTopicItemDragStart(e: DragEvent, item: LearningTopicItem) {
+    if (reorderingTopicConvs || removingTopicConvId || removingTopicNoteId) {
       e.preventDefault()
       return
     }
-    setDraggingTopicConvId(conversationId)
+    const key = learningTopicItemKey(item)
+    setDraggingTopicItemKey(key)
     e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', conversationId)
+    e.dataTransfer.setData('text/plain', key)
   }
 
-  function handleTopicConvDragOver(e: DragEvent) {
+  function handleTopicItemDragOver(e: DragEvent) {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
   }
 
-  function handleTopicConvDrop(e: DragEvent, targetConversationId: string) {
+  function handleTopicItemDrop(e: DragEvent, targetItem: LearningTopicItem) {
     e.preventDefault()
-    const raw = e.dataTransfer.getData('text/plain') || draggingTopicConvId
-    setDraggingTopicConvId(null)
-    if (!topicDetail || !raw || raw === targetConversationId) return
-    const order = topicDetail.conversations.map((c) => c.conversation_id)
-    const from = order.indexOf(raw)
+    const raw = e.dataTransfer.getData('text/plain') || draggingTopicItemKey
+    setDraggingTopicItemKey(null)
+    if (!topicDetail || !raw) return
+    const targetKey = learningTopicItemKey(targetItem)
+    if (raw === targetKey) return
+    const items = topicItemsOrLegacy(topicDetail)
+    const orderKeys = items.map(learningTopicItemKey)
+    const from = orderKeys.indexOf(raw)
     if (from < 0) return
-    const next = [...order]
+    const next = [...items]
     const [el] = next.splice(from, 1)
-    const to = next.indexOf(targetConversationId)
+    const to = orderKeys.indexOf(targetKey)
     if (to < 0) return
     next.splice(to, 0, el)
-    void submitReorderTopicConversations(next)
+    void submitUnifiedTopicReorder(next)
   }
 
   async function submitCreateTopic() {
@@ -1802,17 +1932,17 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                         }}
                         className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors w-fit"
                       >
-                        Add conversations
+                        Add to topic
                       </button>
                       <button
                         type="button"
                         onClick={() => setShowTopicReplay(true)}
-                        disabled={topicDetail.conversations.length === 0}
+                        disabled={topicItemsOrLegacy(topicDetail).length === 0}
                         className="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-200 font-medium hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors w-fit disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-indigo-50 dark:disabled:hover:bg-indigo-950/40"
                       >
                         Replay topic
                       </button>
-                      {topicDetail.conversations.length > 0 && (
+                      {topicItemsOrLegacy(topicDetail).length > 0 && (
                         <p className="text-xs text-gray-500 dark:text-gray-500 flex items-center gap-2">
                           <span>Drag the handle or use arrows to set replay order.</span>
                           {reorderingTopicConvs && (
@@ -1835,24 +1965,26 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                       {reorderTopicConvError}
                     </p>
                   )}
-                  {topicDetail.conversations.length === 0 ? (
+                  {topicItemsOrLegacy(topicDetail).length === 0 ? (
                     <div className="rounded-xl border border-dashed border-gray-300 dark:border-gray-700 px-4 py-8 text-center">
-                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">No conversations in this topic yet</p>
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Nothing in this topic yet</p>
                       <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-md mx-auto">
-                        Use <span className="font-medium text-gray-700 dark:text-gray-300">Add conversations</span> to pick
-                        saved chats from your library. Replay becomes available once you add at least one conversation that
-                        has messages.
+                        Use <span className="font-medium text-gray-700 dark:text-gray-300">Add to topic</span> to attach
+                        saved conversations or notes. Replay runs through the full sequence in order.
                       </p>
                     </div>
                   ) : (
                     <ul className="flex flex-col gap-2">
-                      {topicDetail.conversations.map((row, idx) => (
+                      {topicItemsOrLegacy(topicDetail).map((row, idx) => {
+                        const titems = topicItemsOrLegacy(topicDetail)
+                        const rowKey = learningTopicItemKey(row)
+                        return (
                         <li
-                          key={row.conversation_id}
-                          onDragOver={handleTopicConvDragOver}
-                          onDrop={(e) => handleTopicConvDrop(e, row.conversation_id)}
+                          key={rowKey}
+                          onDragOver={handleTopicItemDragOver}
+                          onDrop={(e) => handleTopicItemDrop(e, row)}
                           className={
-                            draggingTopicConvId === row.conversation_id
+                            draggingTopicItemKey === rowKey
                               ? 'opacity-70'
                               : undefined
                           }
@@ -1860,23 +1992,29 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                           <div className="flex items-stretch gap-2">
                             <button
                               type="button"
-                              draggable={!reorderingTopicConvs && !removingTopicConvId}
-                              onDragStart={(e) => handleTopicConvDragStart(e, row.conversation_id)}
-                              onDragEnd={() => setDraggingTopicConvId(null)}
-                              disabled={reorderingTopicConvs || !!removingTopicConvId}
+                              draggable={!reorderingTopicConvs && !removingTopicConvId && !removingTopicNoteId}
+                              onDragStart={(e) => handleTopicItemDragStart(e, row)}
+                              onDragEnd={() => setDraggingTopicItemKey(null)}
+                              disabled={reorderingTopicConvs || !!removingTopicConvId || !!removingTopicNoteId}
                               title="Drag to reorder"
-                              aria-label={`Drag to reorder: ${row.title}`}
+                              aria-label={`Drag to reorder: ${row.type === 'conversation' ? row.title : row.title}`}
                               className="shrink-0 w-9 flex items-center justify-center rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-500 cursor-grab active:cursor-grabbing hover:bg-gray-200 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M8 6a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0zm8-12a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0zm0 6a2 2 0 11-4 0 2 2 0 014 0z" />
                               </svg>
                             </button>
+                            {row.type === 'conversation' ? (
                             <button
                               type="button"
                               onClick={() => onOpenConversation(row.conversation_id)}
                               className="flex-1 min-w-0 text-left bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3 hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors"
                             >
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[10px] uppercase tracking-wide font-semibold text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 rounded px-1.5 py-0.5">
+                                  Chat
+                                </span>
+                              </div>
                               <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{row.title}</p>
                               <div className="flex items-center gap-2 mt-1 flex-wrap text-xs text-gray-400 dark:text-gray-600">
                                 <span>{row.model}</span>
@@ -1884,17 +2022,45 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                                 <span>Step {row.position + 1}</span>
                               </div>
                             </button>
+                            ) : (
+                            <div className="flex-1 min-w-0 text-left bg-amber-50/80 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/50 rounded-xl px-4 py-3">
+                              <div className="flex items-center gap-2 mb-1">
+                                <svg className="w-4 h-4 text-amber-700 dark:text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-800 dark:text-amber-400 border border-amber-300 dark:border-amber-800 rounded px-1.5 py-0.5">
+                                  Note
+                                </span>
+                              </div>
+                              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{row.title}</p>
+                              {row.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                  {row.tags.map((tag) => (
+                                    <span
+                                      key={tag}
+                                      className="text-[10px] bg-amber-100/80 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 px-1.5 py-0.5 rounded-full"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              <p className="text-xs text-gray-500 dark:text-gray-500 mt-2 line-clamp-2">{row.content_preview}</p>
+                              <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">Step {row.position + 1}</p>
+                            </div>
+                            )}
                             <div className="flex flex-col gap-1 shrink-0">
                               <button
                                 type="button"
                                 disabled={
                                   reorderingTopicConvs ||
                                   !!removingTopicConvId ||
+                                  !!removingTopicNoteId ||
                                   idx === 0
                                 }
-                                onClick={() => moveTopicConversation(idx, idx - 1)}
+                                onClick={() => moveTopicItem(idx, idx - 1)}
                                 title="Move up"
-                                aria-label={`Move “${row.title}” up`}
+                                aria-label="Move up"
                                 className="px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40"
                               >
                                 ↑
@@ -1904,11 +2070,12 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                                 disabled={
                                   reorderingTopicConvs ||
                                   !!removingTopicConvId ||
-                                  idx === topicDetail.conversations.length - 1
+                                  !!removingTopicNoteId ||
+                                  idx === titems.length - 1
                                 }
-                                onClick={() => moveTopicConversation(idx, idx + 1)}
+                                onClick={() => moveTopicItem(idx, idx + 1)}
                                 title="Move down"
-                                aria-label={`Move “${row.title}” down`}
+                                aria-label="Move down"
                                 className="px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40"
                               >
                                 ↓
@@ -1916,12 +2083,21 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                             </div>
                             <button
                               type="button"
-                              disabled={!!removingTopicConvId || reorderingTopicConvs}
-                              onClick={() => void submitRemoveConversationFromTopic(row.conversation_id)}
+                              disabled={
+                                !!removingTopicConvId ||
+                                !!removingTopicNoteId ||
+                                reorderingTopicConvs
+                              }
+                              onClick={() =>
+                                row.type === 'conversation'
+                                  ? void submitRemoveConversationFromTopic(row.conversation_id)
+                                  : void submitRemoveNoteFromTopic(row.note_id)
+                              }
                               className="shrink-0 px-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:border-red-200 dark:hover:border-red-900 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
-                              aria-label={`Remove “${row.title}” from topic`}
+                              aria-label="Remove from topic"
                             >
-                              {removingTopicConvId === row.conversation_id ? (
+                              {(row.type === 'conversation' && removingTopicConvId === row.conversation_id) ||
+                              (row.type === 'note' && removingTopicNoteId === row.note_id) ? (
                                 <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
                               ) : (
                                 'Remove'
@@ -1929,7 +2105,8 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                             </button>
                           </div>
                         </li>
-                      ))}
+                        )
+                      })}
                     </ul>
                   )}
                 </div>
@@ -2148,15 +2325,40 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
         />
       )}
 
-      {/* Add conversations to learning topic */}
+      {/* Add conversations / notes to learning topic */}
       {libraryView === 'learning-topics' && showAddTopicConvModal && topicDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 max-w-lg w-full mx-4 max-h-[min(80vh,32rem)] shadow-2xl flex flex-col gap-4">
             <div className="flex flex-col gap-1 shrink-0">
-              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Add conversations</h2>
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Add to topic</h2>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Choose saved conversations from your library to add to &ldquo;{topicDetail.title}&rdquo;. They are appended to the end of the topic order.
+                Add saved conversations or notes to &ldquo;{topicDetail.title}&rdquo;. New items are appended to the end of
+                the topic order.
               </p>
+            </div>
+            <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 p-0.5 bg-gray-50 dark:bg-gray-950 shrink-0">
+              <button
+                type="button"
+                onClick={() => setTopicAddModalTab('conversations')}
+                className={`flex-1 text-xs font-medium py-2 rounded-md transition-colors ${
+                  topicAddModalTab === 'conversations'
+                    ? 'bg-white dark:bg-gray-800 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                Add conversation
+              </button>
+              <button
+                type="button"
+                onClick={() => setTopicAddModalTab('notes')}
+                className={`flex-1 text-xs font-medium py-2 rounded-md transition-colors ${
+                  topicAddModalTab === 'notes'
+                    ? 'bg-white dark:bg-gray-800 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                }`}
+              >
+                Add note
+              </button>
             </div>
             {addTopicConvError && (
               <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2 shrink-0">
@@ -2164,42 +2366,87 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
               </p>
             )}
             <div className="overflow-y-auto flex-1 min-h-0 space-y-2 pr-1">
-              {(() => {
-                const memberIds = new Set(topicDetail.conversations.map((c) => c.conversation_id))
-                const available = conversations.filter((c) => !memberIds.has(c.id))
-                if (available.length === 0) {
-                  return (
-                    <p className="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">
-                      {conversations.length === 0
-                        ? 'No conversations in your library yet. Save a chat first, then add it here.'
-                        : 'Every library conversation is already in this topic.'}
-                    </p>
-                  )
-                }
-                return available.map((c) => (
-                  <div
-                    key={c.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{c.title}</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-500 truncate">{c.model}</p>
+              {topicAddModalTab === 'conversations'
+                ? (() => {
+                    const memberIds = new Set(topicDetail.conversations.map((c) => c.conversation_id))
+                    const available = conversations.filter((c) => !memberIds.has(c.id))
+                    if (available.length === 0) {
+                      return (
+                        <p className="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">
+                          {conversations.length === 0
+                            ? 'No conversations in your library yet. Save a chat first, then add it here.'
+                            : 'Every library conversation is already in this topic.'}
+                        </p>
+                      )
+                    }
+                    return available.map((c) => (
+                      <div
+                        key={c.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{c.title}</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-500 truncate">{c.model}</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={!!addingTopicConvId || !!addingTopicNoteId}
+                          onClick={() => void submitAddConversationToTopic(c.id)}
+                          className="shrink-0 text-xs px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50"
+                        >
+                          {addingTopicConvId === c.id ? (
+                            <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                          ) : (
+                            'Add'
+                          )}
+                        </button>
+                      </div>
+                    ))
+                  })()
+                : notesForTopicModalLoading ? (
+                    <div className="flex justify-center py-10">
+                      <div className="w-7 h-7 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
                     </div>
-                    <button
-                      type="button"
-                      disabled={!!addingTopicConvId}
-                      onClick={() => void submitAddConversationToTopic(c.id)}
-                      className="shrink-0 text-xs px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50"
-                    >
-                      {addingTopicConvId === c.id ? (
-                        <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                      ) : (
-                        'Add'
-                      )}
-                    </button>
-                  </div>
-                ))
-              })()}
+                  ) : (() => {
+                    const memberNoteIds = new Set(
+                      topicItemsOrLegacy(topicDetail)
+                        .filter((i) => i.type === 'note')
+                        .map((i) => i.note_id),
+                    )
+                    const available = notesForTopicModal.filter((n) => !memberNoteIds.has(n.id))
+                    if (available.length === 0) {
+                      return (
+                        <p className="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">
+                          {notesForTopicModal.length === 0
+                            ? 'No notes in your library yet. Create one from the Notes tab, then add it here.'
+                            : 'Every library note is already in this topic.'}
+                        </p>
+                      )
+                    }
+                    return available.map((n) => (
+                      <div
+                        key={n.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-amber-200/80 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{n.title}</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-500 line-clamp-1">{n.content_preview}</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={!!addingTopicConvId || !!addingTopicNoteId}
+                          onClick={() => void submitAddNoteToTopic(n.id)}
+                          className="shrink-0 text-xs px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50"
+                        >
+                          {addingTopicNoteId === n.id ? (
+                            <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                          ) : (
+                            'Add'
+                          )}
+                        </button>
+                      </div>
+                    ))
+                  })()}
             </div>
             <div className="flex justify-end shrink-0">
               <button

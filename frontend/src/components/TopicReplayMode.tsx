@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { MessageBubble } from './MessageBubble'
 import type { Message } from '../types/chat'
 import type { TopicReplayEntry, TopicReplayResponse } from '../types/learningTopic'
 import { getApiUrl } from '../api/base'
 import { parseJsonSafe, userFacingApiError } from '../api/errors'
 
-function toUiMessage(entry: TopicReplayEntry): Message {
+function toUiMessage(entry: Extract<TopicReplayEntry, { type: 'message' }>): Message {
   return {
     id: entry.message.id,
     role: entry.message.role as Message['role'],
     content: entry.message.content,
     createdAt: new Date(entry.message.created_at),
   }
+}
+
+function replayStepKey(entry: TopicReplayEntry, index: number): string {
+  return entry.type === 'message' ? entry.message.id : `note-${entry.note_id}-${index}`
 }
 
 interface Props {
@@ -75,7 +81,7 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
 
   useEffect(() => {
     if (replaySource === 'public') return
-    if (!data || data.total_messages === 0) return
+    if (!data || data.total_items === 0) return
     if (postReplaySent.current) return
     postReplaySent.current = true
     fetch(getApiUrl(`learning-topics/${topicId}/replay`), {
@@ -158,8 +164,8 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
         <p className="text-base font-medium text-gray-800 dark:text-gray-200">Nothing to replay yet</p>
         <p className="text-sm leading-relaxed">
           {replaySource === 'public'
-            ? 'This topic has no user or assistant messages in its public conversations yet.'
-            : 'This topic has no messages across its conversations. Add conversations that include saved messages, or open a different topic from the library.'}
+            ? 'This topic has no public content to replay yet (messages in public chats or public notes).'
+            : 'This topic has no replay steps yet. Add conversations with messages or notes, or open a different topic from the library.'}
         </p>
         <button
           type="button"
@@ -223,7 +229,7 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
         <div className="max-w-2xl mx-auto flex flex-col gap-2">
           <div className="flex items-center justify-between text-xs text-gray-500">
             <span>
-              Message {currentIndex + 1} of {totalMessages}
+              Step {currentIndex + 1} of {totalMessages}
             </span>
             <span>{Math.round(progressPct)}% through</span>
           </div>
@@ -234,15 +240,23 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
             />
           </div>
           {current && (
-            <p className="text-xs text-gray-500 dark:text-gray-500 truncate" title={current.conversation_title}>
-              From: <span className="text-gray-700 dark:text-gray-300">{current.conversation_title}</span>
+            <p className="text-xs text-gray-500 dark:text-gray-500 truncate" title={current.type === 'message' ? current.conversation_title : current.title}>
+              {current.type === 'message' ? (
+                <>
+                  From: <span className="text-gray-700 dark:text-gray-300">{current.conversation_title}</span>
+                </>
+              ) : (
+                <>
+                  Note: <span className="text-gray-700 dark:text-gray-300">{current.title}</span>
+                </>
+              )}
             </p>
           )}
           {totalMessages <= 24 && (
             <div className="flex items-center justify-center gap-1.5 mt-0.5 flex-wrap">
               {items.map((entry, idx) => (
                 <button
-                  key={entry.message.id}
+                  key={replayStepKey(entry, idx)}
                   type="button"
                   onClick={() => setCurrentIndex(idx)}
                   className={`rounded-full transition-all duration-200 ${
@@ -252,8 +266,8 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
                         ? 'w-2 h-2 bg-indigo-400 dark:bg-indigo-700 hover:bg-indigo-500'
                         : 'w-2 h-2 bg-gray-300 dark:bg-gray-700 hover:bg-gray-400 dark:hover:bg-gray-500'
                   }`}
-                  title={`Go to message ${idx + 1}`}
-                  aria-label={`Go to message ${idx + 1}`}
+                  title={`Go to step ${idx + 1}`}
+                  aria-label={`Go to step ${idx + 1}`}
                 />
               ))}
             </div>
@@ -263,9 +277,25 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
 
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-2xl mx-auto px-4 py-8">
-          {current && (
-            <MessageBubble key={`${current.message.id}-${currentIndex}`} message={toUiMessage(current)} />
-          )}
+          {current &&
+            (current.type === 'message' ? (
+              <MessageBubble key={`${current.message.id}-${currentIndex}`} message={toUiMessage(current)} />
+            ) : (
+              <article
+                key={`${current.note_id}-${currentIndex}`}
+                className="rounded-2xl border border-amber-200/90 dark:border-amber-900/60 bg-amber-50/90 dark:bg-amber-950/30 px-5 py-6 shadow-sm"
+              >
+                <header className="flex items-center gap-2 mb-4">
+                  <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-800 dark:text-amber-400 border border-amber-300 dark:border-amber-800 rounded px-2 py-0.5">
+                    Note
+                  </span>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 leading-snug">{current.title}</h2>
+                </header>
+                <div className="prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2 prose-pre:bg-gray-100 dark:prose-pre:bg-gray-900">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{current.content}</ReactMarkdown>
+                </div>
+              </article>
+            ))}
         </div>
       </div>
 
@@ -325,7 +355,7 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
             <kbd className="px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 font-mono text-[10px]">
               →
             </kbd>{' '}
-            to move between messages
+            to move between steps
           </p>
         </div>
       </div>

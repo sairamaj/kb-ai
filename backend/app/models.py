@@ -198,6 +198,12 @@ class LearningTopic(Base):
         cascade="all, delete-orphan",
         order_by="LearningTopicConversation.position",
     )
+    note_links: Mapped[list["LearningTopicNote"]] = relationship(
+        "LearningTopicNote",
+        back_populates="learning_topic",
+        cascade="all, delete-orphan",
+        order_by="LearningTopicNote.position",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +241,37 @@ class LearningTopicConversation(Base):
 
 
 # ---------------------------------------------------------------------------
+# LearningTopicNote (join table)
+# ---------------------------------------------------------------------------
+
+
+class LearningTopicNote(Base):
+    __tablename__ = "learning_topic_notes"
+
+    learning_topic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("learning_topics.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    note_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("notes.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    learning_topic: Mapped["LearningTopic"] = relationship("LearningTopic", back_populates="note_links")
+    note: Mapped["Note"] = relationship("Note", back_populates="learning_topic_links")
+
+
+# ---------------------------------------------------------------------------
 # Note
 # ---------------------------------------------------------------------------
 
@@ -260,3 +297,8 @@ class Note(Base):
     )
 
     owner: Mapped["User"] = relationship("User", back_populates="notes")
+    learning_topic_links: Mapped[list["LearningTopicNote"]] = relationship(
+        "LearningTopicNote",
+        back_populates="note",
+        cascade="all, delete-orphan",
+    )
