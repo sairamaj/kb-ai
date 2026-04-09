@@ -52,6 +52,8 @@ class LearningTopicConversationItem(BaseModel):
     replay_count: int
     created_at: str
     updated_at: str
+    reviewed_at: str | None = None
+    mastery_level: int = 0
 
 
 class LearningTopicItemConversation(BaseModel):
@@ -64,6 +66,8 @@ class LearningTopicItemConversation(BaseModel):
     replay_count: int
     created_at: str
     updated_at: str
+    reviewed_at: str | None = None
+    mastery_level: int = 0
 
 
 class LearningTopicItemNote(BaseModel):
@@ -74,6 +78,8 @@ class LearningTopicItemNote(BaseModel):
     content_preview: str
     tags: list[str]
     updated_at: str
+    reviewed_at: str | None = None
+    mastery_level: int = 0
 
 
 LearningTopicItem = Annotated[
@@ -87,6 +93,11 @@ class FlashcardItemResponse(BaseModel):
     answer: str
 
 
+class TopicProgressSummary(BaseModel):
+    reviewed: int
+    total: int
+
+
 class LearningTopicDetailResponse(BaseModel):
     id: str
     title: str
@@ -94,6 +105,7 @@ class LearningTopicDetailResponse(BaseModel):
     visibility: str
     created_at: str
     updated_at: str
+    progress: TopicProgressSummary
     items: list[LearningTopicItem]
     conversations: list[LearningTopicConversationItem]
     flashcards: list[FlashcardItemResponse] = Field(default_factory=list)
@@ -179,6 +191,15 @@ class ReorderLearningTopicItemsRequest(BaseModel):
     items: list[TopicReorderEntry] = Field(default_factory=list)
 
 
+class PatchTopicItemProgressRequest(BaseModel):
+    """ENH-04: Mark membership reviewed and/or set mastery (0–5) for one conversation or note in the topic."""
+
+    type: Literal["conversation", "note"]
+    id: str = Field(..., min_length=1)
+    reviewed: bool | None = None
+    mastery_level: int | None = Field(default=None, ge=0, le=5)
+
+
 class TopicReplayMessagePayload(BaseModel):
     id: str
     role: str
@@ -191,6 +212,8 @@ class TopicReplayMessageEntry(BaseModel):
     conversation_id: str
     conversation_title: str
     message: TopicReplayMessagePayload
+    reviewed_at: str | None = None
+    mastery_level: int = 0
 
 
 class TopicReplayNoteEntry(BaseModel):
@@ -198,6 +221,8 @@ class TopicReplayNoteEntry(BaseModel):
     note_id: str
     title: str
     content: str
+    reviewed_at: str | None = None
+    mastery_level: int = 0
 
 
 TopicReplayItem = Annotated[
@@ -285,11 +310,25 @@ async def _next_unified_position(db: AsyncSession, topic_uuid: uuid.UUID) -> int
     return int(max(int(max_c), int(max_n))) + 1
 
 
+def _replay_membership_fields(
+    access: Literal["owner", "public"],
+    membership: LearningTopicConversation | LearningTopicNote,
+) -> tuple[str | None, int]:
+    """Guests do not see owner review/mastery metadata."""
+    if access == "public":
+        return None, 0
+    ra = membership.reviewed_at
+    reviewed_s = ra.isoformat() if ra else None
+    ml = int(membership.mastery_level or 0)
+    return reviewed_s, ml
+
+
 async def _build_topic_replay_sequence(
     db: AsyncSession,
     topic_uuid: uuid.UUID,
     *,
     access: Literal["owner", "public"],
+    unreviewed_only: bool = False,
 ) -> list[TopicReplayItem]:
     """Ordered replay steps: each user/assistant message is one step; each note is one step."""
     membership_rows = (
@@ -320,12 +359,16 @@ async def _build_topic_replay_sequence(
     merged.sort(key=lambda x: (x[0], x[1]))
 
     out: list[TopicReplayItem] = []
-    for _pos, kind, _m, entity in merged:
+    for _pos, kind, membership, entity in merged:
         if kind == "c":
             conv = entity
             assert isinstance(conv, Conversation)
+            assert isinstance(membership, LearningTopicConversation)
             if access == "public" and conv.visibility != Visibility.public:
                 continue
+            if unreviewed_only and membership.reviewed_at is not None:
+                continue
+            reviewed_s, ml = _replay_membership_fields(access, membership)
             msg_rows = (
                 await db.execute(
                     select(Message)
@@ -346,18 +389,26 @@ async def _build_topic_replay_sequence(
                             content=msg.content,
                             created_at=msg.created_at.isoformat(),
                         ),
+                        reviewed_at=reviewed_s,
+                        mastery_level=ml,
                     )
                 )
         else:
             note = entity
             assert isinstance(note, Note)
+            assert isinstance(membership, LearningTopicNote)
             if access == "public" and note.visibility != Visibility.public:
                 continue
+            if unreviewed_only and membership.reviewed_at is not None:
+                continue
+            reviewed_s, ml = _replay_membership_fields(access, membership)
             out.append(
                 TopicReplayNoteEntry(
                     note_id=str(note.id),
                     title=note.title,
                     content=note.content,
+                    reviewed_at=reviewed_s,
+                    mastery_level=ml,
                 )
             )
     return out
@@ -448,12 +499,17 @@ async def _topic_detail_response(
 
     items: list[LearningTopicItem] = []
     legacy_conversations: list[LearningTopicConversationItem] = []
+    reviewed_count = 0
     for _pos, _kind, _m, entity in merged:
         if _kind == "c":
             conv = entity
             assert isinstance(conv, Conversation)
             m = _m
             assert isinstance(m, LearningTopicConversation)
+            if m.reviewed_at is not None:
+                reviewed_count += 1
+            ra = m.reviewed_at.isoformat() if m.reviewed_at else None
+            ml = int(m.mastery_level or 0)
             legacy_conversations.append(
                 LearningTopicConversationItem(
                     conversation_id=str(conv.id),
@@ -464,6 +520,8 @@ async def _topic_detail_response(
                     replay_count=conv.replay_count,
                     created_at=conv.created_at.isoformat(),
                     updated_at=conv.updated_at.isoformat(),
+                    reviewed_at=ra,
+                    mastery_level=ml,
                 )
             )
             items.append(
@@ -476,6 +534,8 @@ async def _topic_detail_response(
                     replay_count=conv.replay_count,
                     created_at=conv.created_at.isoformat(),
                     updated_at=conv.updated_at.isoformat(),
+                    reviewed_at=ra,
+                    mastery_level=ml,
                 )
             )
         else:
@@ -483,6 +543,10 @@ async def _topic_detail_response(
             assert isinstance(note, Note)
             m = _m
             assert isinstance(m, LearningTopicNote)
+            if m.reviewed_at is not None:
+                reviewed_count += 1
+            ra = m.reviewed_at.isoformat() if m.reviewed_at else None
+            ml = int(m.mastery_level or 0)
             items.append(
                 LearningTopicItemNote(
                     note_id=str(note.id),
@@ -491,6 +555,8 @@ async def _topic_detail_response(
                     content_preview=_note_content_preview(note.content, 200),
                     tags=note.tags or [],
                     updated_at=note.updated_at.isoformat(),
+                    reviewed_at=ra,
+                    mastery_level=ml,
                 )
             )
 
@@ -505,6 +571,7 @@ async def _topic_detail_response(
             if q and a:
                 flashcards_out.append(FlashcardItemResponse(question=q, answer=a))
 
+    total_items = len(items)
     return LearningTopicDetailResponse(
         id=str(topic.id),
         title=topic.title,
@@ -512,6 +579,7 @@ async def _topic_detail_response(
         visibility=topic.visibility,
         created_at=topic.created_at.isoformat(),
         updated_at=topic.updated_at.isoformat(),
+        progress=TopicProgressSummary(reviewed=reviewed_count, total=total_items),
         items=items,
         conversations=legacy_conversations,
         flashcards=flashcards_out,
@@ -860,6 +928,69 @@ async def get_learning_topic(
     return detail
 
 
+@router.patch("/{topic_id}/items/progress", response_model=LearningTopicDetailResponse)
+async def patch_learning_topic_item_progress(
+    topic_id: str,
+    body: PatchTopicItemProgressRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """ENH-04: Set reviewed timestamp and/or mastery for one topic member (conversation or note)."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    if body.type == "conversation":
+        conv_uuid = _parse_conversation_uuid(body.id.strip())
+        result = await db.execute(
+            select(LearningTopicConversation).where(
+                LearningTopicConversation.learning_topic_id == topic_uuid,
+                LearningTopicConversation.conversation_id == conv_uuid,
+            )
+        )
+        link = result.scalar_one_or_none()
+        if link is None:
+            raise HTTPException(status_code=404, detail="Conversation is not in this topic")
+    else:
+        note_uuid = _parse_note_uuid(body.id.strip())
+        result = await db.execute(
+            select(LearningTopicNote).where(
+                LearningTopicNote.learning_topic_id == topic_uuid,
+                LearningTopicNote.note_id == note_uuid,
+            )
+        )
+        link = result.scalar_one_or_none()
+        if link is None:
+            raise HTTPException(status_code=404, detail="Note is not in this topic")
+
+    now = datetime.now(timezone.utc)
+    if body.reviewed is True:
+        link.reviewed_at = now
+    elif body.reviewed is False:
+        link.reviewed_at = None
+
+    if body.mastery_level is not None:
+        link.mastery_level = body.mastery_level
+
+    topic.updated_at = now
+    await db.commit()
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
 @router.post("/{topic_id}/flashcards/generate", response_model=LearningTopicDetailResponse)
 async def generate_learning_topic_flashcards(
     topic_id: str,
@@ -982,6 +1113,7 @@ async def get_learning_topic_replay(
     topic_id: str,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    unreviewed_only: bool = Query(False, description="ENH-04: Only steps for items not yet marked reviewed."),
 ) -> TopicReplayResponse:
     """Replay sequence: conversations (user/assistant messages, no system) and notes as single-step slides, in unified topic order."""
     owner_uuid = uuid.UUID(current_user.sub)
@@ -998,7 +1130,12 @@ async def get_learning_topic_replay(
     if topic is None:
         raise HTTPException(status_code=404, detail="Learning topic not found")
 
-    items = await _build_topic_replay_sequence(db, topic_uuid, access="owner")
+    items = await _build_topic_replay_sequence(
+        db,
+        topic_uuid,
+        access="owner",
+        unreviewed_only=unreviewed_only,
+    )
 
     return TopicReplayResponse(
         topic_id=str(topic.id),

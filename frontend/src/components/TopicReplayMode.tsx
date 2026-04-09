@@ -7,6 +7,14 @@ import type { TopicReplayEntry, TopicReplayResponse } from '../types/learningTop
 import { getApiUrl } from '../api/base'
 import { parseJsonSafe, userFacingApiError } from '../api/errors'
 
+function formatShortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 function toUiMessage(entry: Extract<TopicReplayEntry, { type: 'message' }>): Message {
   return {
     id: entry.message.id,
@@ -25,25 +33,39 @@ interface Props {
   onExit: () => void
   /** Guest/public topic page: unauthenticated replay; no replay_count increment. */
   replaySource?: 'authenticated' | 'public'
+  /** ENH-04: refresh topic detail (e.g. Library progress) after review changes. */
+  onTopicProgressChanged?: () => void
 }
 
-export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated' }: Props) {
+export function TopicReplayMode({
+  topicId,
+  onExit,
+  replaySource = 'authenticated',
+  onTopicProgressChanged,
+}: Props) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [data, setData] = useState<TopicReplayResponse | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [retryKey, setRetryKey] = useState(0)
+  const [unreviewedOnly, setUnreviewedOnly] = useState(false)
+  const [markingReview, setMarkingReview] = useState(false)
   const postReplaySent = useRef(false)
 
   useEffect(() => {
     postReplaySent.current = false
+  }, [topicId, replaySource])
+
+  useEffect(() => {
     let cancelled = false
     setLoading(true)
     setLoadError(null)
     const replayUrl =
       replaySource === 'public'
         ? getApiUrl(`learning-topics/${topicId}/public/replay`)
-        : getApiUrl(`learning-topics/${topicId}/replay`)
+        : getApiUrl(
+            `learning-topics/${topicId}/replay${unreviewedOnly ? '?unreviewed_only=true' : ''}`,
+          )
     const replayInit: RequestInit =
       replaySource === 'public' ? {} : { credentials: 'include' as RequestCredentials }
 
@@ -77,7 +99,7 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
     return () => {
       cancelled = true
     }
-  }, [topicId, retryKey, replaySource])
+  }, [topicId, retryKey, replaySource, unreviewedOnly])
 
   useEffect(() => {
     if (replaySource === 'public') return
@@ -104,6 +126,36 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
 
   function goPrev() {
     setCurrentIndex((i) => Math.max(i - 1, 0))
+  }
+
+  async function submitCurrentItemProgress(patch: { reviewed?: boolean; mastery_level?: number }) {
+    if (replaySource === 'public' || !current) return
+    setMarkingReview(true)
+    try {
+      const type = current.type === 'message' ? 'conversation' : 'note'
+      const id = current.type === 'message' ? current.conversation_id : current.note_id
+      const res = await fetch(getApiUrl(`learning-topics/${topicId}/items/progress`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, id, ...patch }),
+      })
+      if (!res.ok) {
+        const body = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, body, {
+            notFound: "Couldn't update progress for this step.",
+            forbidden: "You can't update progress here.",
+          }),
+        )
+      }
+      setRetryKey((k) => k + 1)
+      onTopicProgressChanged?.()
+    } catch {
+      /* non-blocking */
+    } finally {
+      setMarkingReview(false)
+    }
   }
 
   useEffect(() => {
@@ -165,7 +217,9 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
         <p className="text-sm leading-relaxed">
           {replaySource === 'public'
             ? 'This topic has no public content to replay yet (messages in public chats or public notes).'
-            : 'This topic has no replay steps yet. Add conversations with messages or notes, or open a different topic from the library.'}
+            : unreviewedOnly
+              ? 'All items in this topic are already marked reviewed, or there are no steps left in unreviewed-only mode.'
+              : 'This topic has no replay steps yet. Add conversations with messages or notes, or open a different topic from the library.'}
         </p>
         <button
           type="button"
@@ -220,9 +274,25 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
             </span>
           </div>
         </div>
-        <span className="text-sm text-gray-600 dark:text-gray-400 truncate max-w-[40%] text-right" title={data.topic_title}>
-          {data.topic_title}
-        </span>
+        <div className="flex flex-col items-end gap-1 min-w-0 max-w-[45%]">
+          {replaySource === 'authenticated' && (
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-600 dark:text-gray-400 shrink-0">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500"
+                checked={unreviewedOnly}
+                onChange={(e) => {
+                  setUnreviewedOnly(e.target.checked)
+                  setCurrentIndex(0)
+                }}
+              />
+              <span>Unreviewed only</span>
+            </label>
+          )}
+          <span className="text-sm text-gray-600 dark:text-gray-400 truncate text-right w-full" title={data.topic_title}>
+            {data.topic_title}
+          </span>
+        </div>
       </header>
 
       <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200/50 dark:border-gray-800/50 bg-white/50 dark:bg-gray-900/50">
@@ -347,6 +417,46 @@ export function TopicReplayMode({ topicId, onExit, replaySource = 'authenticated
               </button>
             )}
           </div>
+          {replaySource === 'authenticated' && current && (
+            <div className="flex flex-wrap items-center justify-center gap-3 pb-1 border-b border-gray-100 dark:border-gray-800/80 mb-2">
+              <div className="flex items-center gap-2">
+                <label htmlFor="replay-mastery" className="text-xs text-gray-500 dark:text-gray-500">
+                  Mastery
+                </label>
+                <select
+                  id="replay-mastery"
+                  className="text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 px-2 py-1 text-gray-800 dark:text-gray-200"
+                  value={current.mastery_level ?? 0}
+                  disabled={markingReview}
+                  aria-label="Mastery level for this topic item"
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    if (!Number.isFinite(v) || v === (current.mastery_level ?? 0)) return
+                    void submitCurrentItemProgress({ mastery_level: v })
+                  }}
+                >
+                  {[0, 1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="button"
+                disabled={markingReview}
+                onClick={() => void submitCurrentItemProgress({ reviewed: current.reviewed_at == null })}
+                className="text-xs px-3 py-1.5 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 disabled:opacity-50"
+              >
+                {markingReview ? '…' : current.reviewed_at ? 'Clear review' : 'Mark reviewed'}
+              </button>
+              {current.reviewed_at ? (
+                <span className="text-xs text-gray-500 dark:text-gray-500" title={current.reviewed_at}>
+                  Reviewed {formatShortDate(current.reviewed_at)}
+                </span>
+              ) : null}
+            </div>
+          )}
           <p className="text-center text-xs text-gray-400 dark:text-gray-600">
             Use{' '}
             <kbd className="px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 font-mono text-[10px]">

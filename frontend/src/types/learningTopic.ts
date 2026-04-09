@@ -23,6 +23,9 @@ export interface LearningTopicConversationMember {
   replay_count: number
   created_at: string
   updated_at: string
+  /** ENH-04: set when item has been marked reviewed in this topic */
+  reviewed_at?: string | null
+  mastery_level?: number
 }
 
 export interface LearningTopicItemConversation {
@@ -35,6 +38,8 @@ export interface LearningTopicItemConversation {
   replay_count: number
   created_at: string
   updated_at: string
+  reviewed_at?: string | null
+  mastery_level?: number
 }
 
 export interface LearningTopicItemNote {
@@ -45,9 +50,17 @@ export interface LearningTopicItemNote {
   content_preview: string
   tags: string[]
   updated_at: string
+  reviewed_at?: string | null
+  mastery_level?: number
 }
 
 export type LearningTopicItem = LearningTopicItemConversation | LearningTopicItemNote
+
+/** ENH-04: counts topic members (conversations + notes), not individual replay messages. */
+export interface LearningTopicProgressSummary {
+  reviewed: number
+  total: number
+}
 
 /** ENH-02: AI-generated Q&A pairs stored on the topic. */
 export interface LearningTopicFlashcard {
@@ -62,6 +75,8 @@ export interface LearningTopicDetail {
   visibility: 'public' | 'private'
   created_at: string
   updated_at: string
+  /** ENH-04: reviewed/total topic items (not per-message replay steps). */
+  progress?: LearningTopicProgressSummary
   /** Unified position-ordered members (conversations and notes). */
   items?: LearningTopicItem[]
   conversations: LearningTopicConversationMember[]
@@ -136,6 +151,8 @@ export interface TopicReplayMessageEntry {
   conversation_id: string
   conversation_title: string
   message: TopicReplayMessagePayload
+  reviewed_at?: string | null
+  mastery_level?: number
 }
 
 export interface TopicReplayNoteEntry {
@@ -143,6 +160,8 @@ export interface TopicReplayNoteEntry {
   note_id: string
   title: string
   content: string
+  reviewed_at?: string | null
+  mastery_level?: number
 }
 
 export type TopicReplayEntry = TopicReplayMessageEntry | TopicReplayNoteEntry
@@ -156,4 +175,12 @@ export interface TopicReplayResponse {
 
 export interface TopicReplayIncrementResponse {
   conversation_replay_counts: { conversation_id: string; replay_count: number }[]
+}
+
+/** ENH-04 */
+export interface PatchTopicItemProgressPayload {
+  type: 'conversation' | 'note'
+  id: string
+  reviewed?: boolean
+  mastery_level?: number
 }

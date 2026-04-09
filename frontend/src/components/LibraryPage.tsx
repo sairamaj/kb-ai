@@ -68,6 +68,35 @@ function topicItemsOrLegacy(detail: LearningTopicDetail): LearningTopicItem[] {
   }))
 }
 
+/** ENH-04: topic-level progress (counts conversations + notes, not replay message steps). */
+function topicProgressFromDetail(detail: LearningTopicDetail): { reviewed: number; total: number } {
+  if (detail.progress) return detail.progress
+  const items = topicItemsOrLegacy(detail)
+  const reviewed = items.filter((it) => it.reviewed_at != null && it.reviewed_at !== '').length
+  return { reviewed, total: items.length }
+}
+
+function TopicStudyProgressStrip({ detail }: { detail: LearningTopicDetail }) {
+  const tp = topicProgressFromDetail(detail)
+  const pct = tp.total > 0 ? Math.round((tp.reviewed / tp.total) * 100) : 0
+  return (
+    <div className="mt-4 rounded-xl border border-emerald-200/90 dark:border-emerald-900/50 bg-emerald-50/60 dark:bg-emerald-950/25 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="font-medium text-emerald-900 dark:text-emerald-200">Study progress</span>
+        <span className="text-emerald-800 dark:text-emerald-300 tabular-nums">
+          {tp.reviewed} of {tp.total} items reviewed ({pct}%)
+        </span>
+      </div>
+      <div className="mt-2 h-2 rounded-full bg-emerald-200/80 dark:bg-emerald-900/50 overflow-hidden">
+        <div
+          className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 function readStoredLearningTopicId(): string | null {
   try {
     const t = sessionStorage.getItem(SESSION_LEARNING_TOPIC_ID)
@@ -187,6 +216,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [reorderingTopicConvs, setReorderingTopicConvs] = useState(false)
   const [reorderTopicConvError, setReorderTopicConvError] = useState<string | null>(null)
   const [draggingTopicItemKey, setDraggingTopicItemKey] = useState<string | null>(null)
+  const [topicItemProgressUpdating, setTopicItemProgressUpdating] = useState<string | null>(null)
   const [showTopicReplay, setShowTopicReplay] = useState(false)
   const [showFlashcardMode, setShowFlashcardMode] = useState(false)
   const [generatingFlashcards, setGeneratingFlashcards] = useState(false)
@@ -677,6 +707,45 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     }
   }
 
+  async function submitTopicItemProgress(
+    row: LearningTopicItem,
+    patch: { reviewed?: boolean; mastery_level?: number },
+  ) {
+    if (!selectedTopicId) return
+    const key = learningTopicItemKey(row)
+    setTopicItemProgressUpdating(key)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${selectedTopicId}/items/progress`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: row.type === 'conversation' ? 'conversation' : 'note',
+          id: row.type === 'conversation' ? row.conversation_id : row.note_id,
+          ...patch,
+        }),
+      })
+      if (!res.ok) {
+        const data = await parseJsonSafe(res)
+        throw new Error(
+          userFacingApiError(res.status, data, {
+            notFound: "This topic or item wasn't found.",
+            forbidden: "You can't update progress for this topic.",
+          }),
+        )
+      }
+      const data = (await res.json()) as LearningTopicDetail
+      setTopicDetail(data)
+      setLearningTopics((prev) =>
+        prev.map((t) => (t.id === selectedTopicId ? { ...t, updated_at: data.updated_at } : t)),
+      )
+    } catch {
+      /* keep UI stable; errors are rare for owner actions */
+    } finally {
+      setTopicItemProgressUpdating(null)
+    }
+  }
+
   async function generateTopicFlashcards() {
     if (!selectedTopicId) return
     setGeneratingFlashcards(true)
@@ -738,7 +807,8 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   }
 
   function moveTopicItem(fromIndex: number, toIndex: number) {
-    if (!topicDetail || reorderingTopicConvs || removingTopicConvId || removingTopicNoteId) return
+    if (!topicDetail || reorderingTopicConvs || removingTopicConvId || removingTopicNoteId || topicItemProgressUpdating)
+      return
     const items = topicItemsOrLegacy(topicDetail)
     const n = items.length
     if (fromIndex < 0 || fromIndex >= n || toIndex < 0 || toIndex >= n || fromIndex === toIndex) return
@@ -749,7 +819,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   }
 
   function handleTopicItemDragStart(e: DragEvent, item: LearningTopicItem) {
-    if (reorderingTopicConvs || removingTopicConvId || removingTopicNoteId) {
+    if (reorderingTopicConvs || removingTopicConvId || removingTopicNoteId || topicItemProgressUpdating) {
       e.preventDefault()
       return
     }
@@ -768,7 +838,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     e.preventDefault()
     const raw = e.dataTransfer.getData('text/plain') || draggingTopicItemKey
     setDraggingTopicItemKey(null)
-    if (!topicDetail || !raw) return
+    if (!topicDetail || !raw || topicItemProgressUpdating) return
     const targetKey = learningTopicItemKey(targetItem)
     if (raw === targetKey) return
     const items = topicItemsOrLegacy(topicDetail)
@@ -2315,6 +2385,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                         </p>
                       )}
                     </div>
+                    {topicItemsOrLegacy(topicDetail).length > 0 && <TopicStudyProgressStrip detail={topicDetail} />}
                   </div>
                   {flashcardActionError && (
                     <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
@@ -2358,10 +2429,20 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                           <div className="flex items-stretch gap-2">
                             <button
                               type="button"
-                              draggable={!reorderingTopicConvs && !removingTopicConvId && !removingTopicNoteId}
+                              draggable={
+                                !reorderingTopicConvs &&
+                                !removingTopicConvId &&
+                                !removingTopicNoteId &&
+                                !topicItemProgressUpdating
+                              }
                               onDragStart={(e) => handleTopicItemDragStart(e, row)}
                               onDragEnd={() => setDraggingTopicItemKey(null)}
-                              disabled={reorderingTopicConvs || !!removingTopicConvId || !!removingTopicNoteId}
+                              disabled={
+                                reorderingTopicConvs ||
+                                !!removingTopicConvId ||
+                                !!removingTopicNoteId ||
+                                !!topicItemProgressUpdating
+                              }
                               title="Drag to reorder"
                               aria-label={`Drag to reorder: ${row.type === 'conversation' ? row.title : row.title}`}
                               className="shrink-0 w-9 flex items-center justify-center rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-500 cursor-grab active:cursor-grabbing hover:bg-gray-200 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -2415,6 +2496,60 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                               <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">Step {row.position + 1}</p>
                             </div>
                             )}
+                            <div className="flex flex-col gap-1.5 shrink-0 justify-center w-[9.5rem]">
+                              <span className="text-[10px] text-gray-500 dark:text-gray-500 uppercase tracking-wide">
+                                Mastery
+                              </span>
+                              <select
+                                className="text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 px-2 py-1 text-gray-800 dark:text-gray-200"
+                                value={row.mastery_level ?? 0}
+                                disabled={
+                                  topicItemProgressUpdating === rowKey ||
+                                  reorderingTopicConvs ||
+                                  !!removingTopicConvId ||
+                                  !!removingTopicNoteId
+                                }
+                                aria-label={`Mastery level for ${row.title}`}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value)
+                                  if (!Number.isFinite(v) || v === (row.mastery_level ?? 0)) return
+                                  void submitTopicItemProgress(row, { mastery_level: v })
+                                }}
+                              >
+                                {[0, 1, 2, 3, 4, 5].map((n) => (
+                                  <option key={n} value={n}>
+                                    {n}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                disabled={
+                                  topicItemProgressUpdating === rowKey ||
+                                  reorderingTopicConvs ||
+                                  !!removingTopicConvId ||
+                                  !!removingTopicNoteId
+                                }
+                                onClick={() =>
+                                  void submitTopicItemProgress(row, { reviewed: row.reviewed_at == null })
+                                }
+                                className="text-xs px-2 py-1 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 disabled:opacity-50"
+                              >
+                                {topicItemProgressUpdating === rowKey
+                                  ? '…'
+                                  : row.reviewed_at
+                                    ? 'Clear review'
+                                    : 'Mark reviewed'}
+                              </button>
+                              {row.reviewed_at ? (
+                                <span
+                                  className="text-[10px] text-gray-500 dark:text-gray-500 leading-tight line-clamp-2"
+                                  title={row.reviewed_at}
+                                >
+                                  Reviewed {formatDate(row.reviewed_at)}
+                                </span>
+                              ) : null}
+                            </div>
                             <div className="flex flex-col gap-1 shrink-0">
                               <button
                                 type="button"
@@ -2422,6 +2557,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                                   reorderingTopicConvs ||
                                   !!removingTopicConvId ||
                                   !!removingTopicNoteId ||
+                                  !!topicItemProgressUpdating ||
                                   idx === 0
                                 }
                                 onClick={() => moveTopicItem(idx, idx - 1)}
@@ -2437,6 +2573,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                                   reorderingTopicConvs ||
                                   !!removingTopicConvId ||
                                   !!removingTopicNoteId ||
+                                  !!topicItemProgressUpdating ||
                                   idx === titems.length - 1
                                 }
                                 onClick={() => moveTopicItem(idx, idx + 1)}
@@ -2452,7 +2589,8 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                               disabled={
                                 !!removingTopicConvId ||
                                 !!removingTopicNoteId ||
-                                reorderingTopicConvs
+                                reorderingTopicConvs ||
+                                !!topicItemProgressUpdating
                               }
                               onClick={() =>
                                 row.type === 'conversation'
@@ -2688,6 +2826,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
             setShowTopicReplay(false)
             void loadTopicDetail(selectedTopicId)
           }}
+          onTopicProgressChanged={() => void loadTopicDetail(selectedTopicId)}
         />
       )}
 

@@ -287,26 +287,6 @@ Goal: Strengthen the knowledge management experience with AI-powered and product
 
 ---
 
-### ENH-03 — Web clip / URL import
-
-**As a user**, I want to paste a URL and import its article content as a note, so that I can save web reading to my knowledge base.
-
-**Acceptance criteria:**
-- "Import from URL" option is present in the "New Note" dialog.
-- Backend endpoint `POST /notes/import-url` accepts `{ url: string }`.
-- Backend fetches the page, extracts article text (using `trafilatura` or `readability-lxml`), and returns pre-filled `title` and `content` (markdown).
-- `source_url` field is populated on the created note.
-- User reviews and edits the imported content before saving.
-- Errors (unreachable URL, no article content) return a user-friendly message.
-
-**Validation checklist:**
-- Import a public article URL; verify title and content are populated.
-- Verify `source_url` is saved on the note.
-- Import an invalid URL; verify error message shown.
-- Import a URL with paywalled content; verify graceful fallback (partial content or error).
-
----
-
 ### ENH-04 — Progress / Mastery Tracking
 
 **As a user**, I want to mark topic items as reviewed and see my progress, so that I know what I've studied and what remains.
@@ -323,24 +303,6 @@ Goal: Strengthen the knowledge management experience with AI-powered and product
 - Enable "Unreviewed only" in replay; verify only unreviewed items appear.
 - Mark remaining items; verify progress bar reaches 100%.
 - Verify `reviewed_at` timestamp is set on API response.
-
----
-
-### ENH-05 — Note templates
-
-**As a user**, I want to start from a pre-built template when creating a note, so that I don't have to format common note structures from scratch.
-
-**Acceptance criteria:**
-- "New Note" dialog offers a template picker with at minimum: Meeting Notes, Study Notes, Book Summary, Concept Explanation.
-- Templates are stored as static JSON in `frontend/src/config/noteTemplates.ts`.
-- Selecting a template pre-fills the editor with the template markdown.
-- User can edit the template content freely before saving.
-- Selecting "Blank" starts with an empty editor (default).
-
-**Validation checklist:**
-- Select "Meeting Notes" template; verify editor pre-populates with expected skeleton.
-- Edit a template and save; verify saved content matches edits, not original template.
-- Select "Blank"; verify editor is empty.
 
 ---
 
