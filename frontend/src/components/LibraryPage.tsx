@@ -195,6 +195,8 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
   const [createTopicVisibility, setCreateTopicVisibility] = useState<'public' | 'private'>('private')
   const [topicVisibilityUpdating, setTopicVisibilityUpdating] = useState<string | null>(null)
   const [copiedTopicId, setCopiedTopicId] = useState<string | null>(null)
+  const [exportingLearningTopicFormat, setExportingLearningTopicFormat] = useState<'md' | 'pdf' | null>(null)
+  const [learningTopicExportError, setLearningTopicExportError] = useState<string | null>(null)
   const [deleteTopicId, setDeleteTopicId] = useState<string | null>(null)
   const [isDeletingTopic, setIsDeletingTopic] = useState(false)
   const [deleteTopicError, setDeleteTopicError] = useState<string | null>(null)
@@ -413,11 +415,14 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     setFlashcardActionError(null)
     setGeneratingFlashcards(false)
     setDiscardingFlashcards(false)
+    setLearningTopicExportError(null)
+    setExportingLearningTopicFormat(null)
   }
 
   async function loadTopicDetail(topicId: string) {
     setTopicDetailLoading(true)
     setTopicDetailError(null)
+    setLearningTopicExportError(null)
     try {
       const res = await fetch(getApiUrl(`learning-topics/${topicId}`), { credentials: 'include' })
       if (!res.ok) {
@@ -469,6 +474,7 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
     setShowTopicReplay(false)
     setShowFlashcardMode(false)
     setFlashcardActionError(null)
+    setLearningTopicExportError(null)
     void loadTopicDetail(topicId)
   }
 
@@ -1024,6 +1030,33 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
       setCopiedTopicId(topicId)
       setTimeout(() => setCopiedTopicId(null), 2000)
     })
+  }
+
+  async function exportLearningTopic(topicId: string, format: 'md' | 'pdf', topicTitle: string) {
+    setLearningTopicExportError(null)
+    setExportingLearningTopicFormat(format)
+    try {
+      const res = await fetch(getApiUrl(`learning-topics/${topicId}/export?format=${format}`), {
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error(`Export failed (${res.status})`)
+      const blob = await res.blob()
+      const disposition = res.headers.get('Content-Disposition')
+      const match = disposition?.match(/filename="?([^";\n]+)"?/)
+      const ext = format === 'pdf' ? '.pdf' : '.md'
+      const safeName = topicTitle.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80)
+      const filename = match ? match[1].trim() : `${safeName}${ext}`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setLearningTopicExportError('Export failed.')
+    } finally {
+      setExportingLearningTopicFormat(null)
+    }
   }
 
   async function exportCollection(collectionId: string, format: 'md' | 'zip', collectionName: string) {
@@ -2340,6 +2373,22 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                       </button>
                       <button
                         type="button"
+                        onClick={() => void exportLearningTopic(topicDetail.id, 'md', topicDetail.title)}
+                        disabled={exportingLearningTopicFormat !== null}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors w-fit disabled:opacity-50"
+                      >
+                        {exportingLearningTopicFormat === 'md' ? 'Exporting…' : 'Export Markdown'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void exportLearningTopic(topicDetail.id, 'pdf', topicDetail.title)}
+                        disabled={exportingLearningTopicFormat !== null}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors w-fit disabled:opacity-50"
+                      >
+                        {exportingLearningTopicFormat === 'pdf' ? 'Exporting…' : 'Export PDF'}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void generateTopicFlashcards()}
                         disabled={
                           topicItemsOrLegacy(topicDetail).length === 0 || generatingFlashcards || discardingFlashcards
@@ -2385,6 +2434,9 @@ export function LibraryPage({ onBack, onOpenConversation, onOpenReports }: Props
                         </p>
                       )}
                     </div>
+                    {learningTopicExportError && (
+                      <p className="text-xs text-red-600 dark:text-red-400 mt-2">{learningTopicExportError}</p>
+                    )}
                     {topicItemsOrLegacy(topicDetail).length > 0 && <TopicStudyProgressStrip detail={topicDetail} />}
                   </div>
                   {flashcardActionError && (

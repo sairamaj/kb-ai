@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Literal, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -12,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth import CurrentUser
 from app.database import get_db
+from app.export_utils import learning_topic_to_markdown, markdown_to_pdf_bytes, sanitize_filename
 from app.flashcard_generation import generate_flashcards_from_source
 from app.limits import PRO_LEARNING_TOPIC_LIMIT, STARTER_LEARNING_TOPIC_LIMIT
 from app.models import (
@@ -586,6 +588,76 @@ async def _topic_detail_response(
     )
 
 
+async def _learning_topic_merged_for_export(
+    db: AsyncSession,
+    topic_uuid: uuid.UUID,
+    owner_uuid: uuid.UUID,
+) -> tuple[LearningTopic, list[tuple[Literal["conversation", "note"], Conversation | Note]]] | None:
+    """Owner topic + ordered items with full conversation messages loaded for export."""
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        return None
+
+    membership_rows = (
+        await db.execute(
+            select(LearningTopicConversation, Conversation)
+            .join(Conversation, Conversation.id == LearningTopicConversation.conversation_id)
+            .where(LearningTopicConversation.learning_topic_id == topic_uuid)
+            .order_by(
+                LearningTopicConversation.position.asc(),
+                Conversation.created_at.asc(),
+            )
+        )
+    ).all()
+
+    note_rows = (
+        await db.execute(
+            select(LearningTopicNote, Note)
+            .join(Note, Note.id == LearningTopicNote.note_id)
+            .where(LearningTopicNote.learning_topic_id == topic_uuid)
+            .order_by(LearningTopicNote.position.asc(), Note.updated_at.asc())
+        )
+    ).all()
+
+    merged: list[tuple[int, Literal["c", "n"], Conversation | Note]] = []
+    for _m, conv in membership_rows:
+        merged.append((_m.position, "c", conv))
+    for _m, note in note_rows:
+        merged.append((_m.position, "n", note))
+    merged.sort(key=lambda x: (x[0], x[1]))
+
+    conv_ids = [e.id for _p, k, e in merged if k == "c"]
+    conv_with_msgs: dict[uuid.UUID, Conversation] = {}
+    if conv_ids:
+        conv_result = await db.execute(
+            select(Conversation)
+            .where(Conversation.id.in_(conv_ids))
+            .options(selectinload(Conversation.messages))
+        )
+        for c in conv_result.scalars().unique().all():
+            conv_with_msgs[c.id] = c
+
+    out: list[tuple[Literal["conversation", "note"], Conversation | Note]] = []
+    for _pos, kind, entity in merged:
+        if kind == "c":
+            assert isinstance(entity, Conversation)
+            loaded = conv_with_msgs.get(entity.id)
+            if loaded is None:
+                continue
+            out.append(("conversation", loaded))
+        else:
+            assert isinstance(entity, Note)
+            out.append(("note", entity))
+    return (topic, out)
+
+
 @router.get("", response_model=list[LearningTopicListItem])
 async def list_learning_topics(
     current_user: CurrentUser,
@@ -910,6 +982,52 @@ async def get_public_learning_topic_replay(
         topic_title=topic.title,
         total_items=len(items),
         items=items,
+    )
+
+
+@router.get("/{topic_id}/export", response_class=Response)
+async def export_learning_topic(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    format: Literal["md", "pdf"] = Query(
+        default="md",
+        description="Export as Markdown (.md) or PDF",
+    ),
+) -> Response:
+    """Export topic as a single Markdown or PDF (conversations as transcripts, notes as markdown). Owner only."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+    loaded = await _learning_topic_merged_for_export(db, topic_uuid, owner_uuid)
+    if loaded is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    topic, sections = loaded
+    md = learning_topic_to_markdown(
+        title=topic.title,
+        description=topic.description,
+        created_at=topic.created_at,
+        updated_at=topic.updated_at,
+        merged=sections,
+    )
+    base = sanitize_filename(topic.title)
+    if format == "md":
+        return PlainTextResponse(
+            content=md,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{base}.md"'},
+        )
+    try:
+        pdf_bytes = markdown_to_pdf_bytes(md)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not generate PDF. Try Markdown export instead.",
+        ) from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{base}.pdf"'},
     )
 
 

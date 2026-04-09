@@ -324,26 +324,6 @@ Goal: Strengthen the knowledge management experience with AI-powered and product
 
 ---
 
-### ENH-08 — Bi-directional note linking (wiki-style)
-
-**As a user**, I want to link notes to each other using `[[Note Title]]` syntax, so that I can navigate my knowledge graph.
-
-**Acceptance criteria:**
-- Migration creates a `note_links` join table (`source_note_id`, `target_note_id`, both FK → `notes` CASCADE).
-- On save, backend parses `[[...]]` tokens and resolves them to existing note IDs by title (case-insensitive, owner-scoped). Unresolved links are ignored.
-- `note_links` are updated transactionally on each save.
-- Rendered note (in `NoteEditor` preview and `PublicNotePage`) converts `[[Note Title]]` to a clickable internal link.
-- `GET /notes/{id}` response includes `backlinks: NoteSummary[]` (notes that link to this note).
-- A "Linked from" backlinks panel is shown at the bottom of `NoteEditor` and `PublicNotePage`.
-
-**Validation checklist:**
-- Create Note A and Note B. In Note A, type `[[Note B]]`. Save Note A.
-- Verify `[[Note B]]` renders as a clickable link in preview.
-- Open Note B; verify Note A appears in the backlinks panel.
-- Rename Note B title and re-save Note A; verify link resolves or falls back gracefully.
-- Delete Note A; verify `note_links` rows are removed (CASCADE).
-
----
 
 ## Definition of Done (per story)
 
