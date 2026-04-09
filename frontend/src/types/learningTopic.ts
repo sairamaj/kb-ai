@@ -23,6 +23,49 @@ export interface LearningTopicConversationMember {
   replay_count: number
   created_at: string
   updated_at: string
+  /** ENH-04: set when item has been marked reviewed in this topic */
+  reviewed_at?: string | null
+  mastery_level?: number
+}
+
+export interface LearningTopicItemConversation {
+  type: 'conversation'
+  conversation_id: string
+  position: number
+  title: string
+  model: string
+  tags: string[]
+  replay_count: number
+  created_at: string
+  updated_at: string
+  reviewed_at?: string | null
+  mastery_level?: number
+}
+
+export interface LearningTopicItemNote {
+  type: 'note'
+  note_id: string
+  position: number
+  title: string
+  content_preview: string
+  tags: string[]
+  updated_at: string
+  reviewed_at?: string | null
+  mastery_level?: number
+}
+
+export type LearningTopicItem = LearningTopicItemConversation | LearningTopicItemNote
+
+/** ENH-04: counts topic members (conversations + notes), not individual replay messages. */
+export interface LearningTopicProgressSummary {
+  reviewed: number
+  total: number
+}
+
+/** ENH-02: AI-generated Q&A pairs stored on the topic. */
+export interface LearningTopicFlashcard {
+  question: string
+  answer: string
 }
 
 export interface LearningTopicDetail {
@@ -32,7 +75,13 @@ export interface LearningTopicDetail {
   visibility: 'public' | 'private'
   created_at: string
   updated_at: string
+  /** ENH-04: reviewed/total topic items (not per-message replay steps). */
+  progress?: LearningTopicProgressSummary
+  /** Unified position-ordered members (conversations and notes). */
+  items?: LearningTopicItem[]
   conversations: LearningTopicConversationMember[]
+  /** Saved flashcards; empty array if none. */
+  flashcards?: LearningTopicFlashcard[]
 }
 
 export interface CreateLearningTopicPayload {
@@ -86,6 +135,10 @@ export interface ReorderLearningTopicConversationsPayload {
   conversation_ids: string[]
 }
 
+export interface ReorderLearningTopicItemsPayload {
+  items: { type: 'conversation' | 'note'; id: string }[]
+}
+
 export interface TopicReplayMessagePayload {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -93,19 +146,41 @@ export interface TopicReplayMessagePayload {
   created_at: string
 }
 
-export interface TopicReplayEntry {
+export interface TopicReplayMessageEntry {
+  type: 'message'
   conversation_id: string
   conversation_title: string
   message: TopicReplayMessagePayload
+  reviewed_at?: string | null
+  mastery_level?: number
 }
+
+export interface TopicReplayNoteEntry {
+  type: 'note'
+  note_id: string
+  title: string
+  content: string
+  reviewed_at?: string | null
+  mastery_level?: number
+}
+
+export type TopicReplayEntry = TopicReplayMessageEntry | TopicReplayNoteEntry
 
 export interface TopicReplayResponse {
   topic_id: string
   topic_title: string
-  total_messages: number
+  total_items: number
   items: TopicReplayEntry[]
 }
 
 export interface TopicReplayIncrementResponse {
   conversation_replay_counts: { conversation_id: string; replay_count: number }[]
+}
+
+/** ENH-04 */
+export interface PatchTopicItemProgressPayload {
+  type: 'conversation' | 'note'
+  id: string
+  reviewed?: boolean
+  mastery_level?: number
 }

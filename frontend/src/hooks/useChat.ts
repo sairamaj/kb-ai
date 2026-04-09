@@ -118,6 +118,7 @@ export async function streamChatReply(
     response = await fetch(getApiUrl('chat/stream'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ messages: payload, provider, model }),
     })
   } catch {

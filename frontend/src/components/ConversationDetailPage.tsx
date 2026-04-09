@@ -10,7 +10,13 @@ import { ConversationDetail, UpdateConversationPayload } from '../types/conversa
 import type { CollectionSummary } from '../types/collection'
 import { Message } from '../types/chat'
 import { getApiUrl } from '../api/base'
+import { streamChatReply } from '../hooks/useChat'
+import {
+  SUMMARIZE_SYSTEM_PROMPT,
+  buildSummarizeUserMessageForConversation,
+} from '../lib/summarize'
 import { SHOW_COLLECTIONS_IN_UI } from '../config/features'
+import { SummarizeWithAiPanel } from './SummarizeWithAiPanel'
 
 interface Props {
   id: string
@@ -78,6 +84,11 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
 
   const [exporting, setExporting] = useState(false)
 
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [summaryText, setSummaryText] = useState('')
+  const [summaryStreaming, setSummaryStreaming] = useState(false)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
+
   async function exportAsMarkdown() {
     if (!conv) return
     setExporting(true)
@@ -99,6 +110,37 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
     } finally {
       setExporting(false)
     }
+  }
+
+  const canSummarizeConversation = Boolean(
+    conv &&
+      conv.messages.some(
+        (m) =>
+          (m.role === 'user' || m.role === 'assistant') && m.content.trim().length > 0,
+      ),
+  )
+
+  async function runSummarizeConversation() {
+    if (!conv || !canSummarizeConversation || summaryStreaming) return
+    setSummaryOpen(true)
+    setSummaryError(null)
+    setSummaryText('')
+    setSummaryStreaming(true)
+    const userContent = buildSummarizeUserMessageForConversation(conv.title, conv.messages)
+    await streamChatReply(
+      {
+        messages: [{ role: 'user', content: userContent }],
+        systemPrompt: SUMMARIZE_SYSTEM_PROMPT,
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+      },
+      (token) => setSummaryText((prev) => prev + token),
+      () => setSummaryStreaming(false),
+      (err) => {
+        setSummaryStreaming(false)
+        setSummaryError(err)
+      },
+    )
   }
 
   function copyShareLink() {
@@ -393,6 +435,26 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
               )}
             </button>
           )}
+          <button
+            onClick={() => void runSummarizeConversation()}
+            disabled={!canSummarizeConversation || summaryStreaming}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/40 hover:bg-violet-100 dark:hover:bg-violet-900/30 text-xs text-violet-800 dark:text-violet-200 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            title="Stream an AI study summary (not saved to the conversation)"
+          >
+            {summaryStreaming ? (
+              <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+            )}
+            {summaryStreaming ? 'Summarizing…' : 'Summarize with AI'}
+          </button>
           <button
             onClick={() => { void exportAsMarkdown() }}
             disabled={exporting}
@@ -745,6 +807,16 @@ export function ConversationDetailPage({ id, onBack, onDeleted, onContinue, onOp
           </div>
         </div>
       </div>
+
+      {summaryOpen && (
+        <SummarizeWithAiPanel
+          variant="drawer"
+          onClose={() => setSummaryOpen(false)}
+          summaryText={summaryText}
+          isStreaming={summaryStreaming}
+          error={summaryError}
+        />
+      )}
     </div>
   )
 }

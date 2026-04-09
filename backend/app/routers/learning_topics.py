@@ -1,8 +1,10 @@
 import math
 import uuid
 from datetime import datetime, timezone
+from typing import Annotated, Literal, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -11,13 +13,17 @@ from sqlalchemy.orm import selectinload
 
 from app.auth import CurrentUser
 from app.database import get_db
+from app.export_utils import learning_topic_to_markdown, markdown_to_pdf_bytes, sanitize_filename
+from app.flashcard_generation import generate_flashcards_from_source
 from app.limits import PRO_LEARNING_TOPIC_LIMIT, STARTER_LEARNING_TOPIC_LIMIT
 from app.models import (
     Conversation,
     LearningTopic,
     LearningTopicConversation,
+    LearningTopicNote,
     Message,
     MessageRole,
+    Note,
     User,
     UserRole,
     Visibility,
@@ -48,6 +54,50 @@ class LearningTopicConversationItem(BaseModel):
     replay_count: int
     created_at: str
     updated_at: str
+    reviewed_at: str | None = None
+    mastery_level: int = 0
+
+
+class LearningTopicItemConversation(BaseModel):
+    type: Literal["conversation"] = "conversation"
+    conversation_id: str
+    position: int
+    title: str
+    model: str
+    tags: list[str]
+    replay_count: int
+    created_at: str
+    updated_at: str
+    reviewed_at: str | None = None
+    mastery_level: int = 0
+
+
+class LearningTopicItemNote(BaseModel):
+    type: Literal["note"] = "note"
+    note_id: str
+    position: int
+    title: str
+    content_preview: str
+    tags: list[str]
+    updated_at: str
+    reviewed_at: str | None = None
+    mastery_level: int = 0
+
+
+LearningTopicItem = Annotated[
+    Union[LearningTopicItemConversation, LearningTopicItemNote],
+    Field(discriminator="type"),
+]
+
+
+class FlashcardItemResponse(BaseModel):
+    question: str
+    answer: str
+
+
+class TopicProgressSummary(BaseModel):
+    reviewed: int
+    total: int
 
 
 class LearningTopicDetailResponse(BaseModel):
@@ -57,7 +107,10 @@ class LearningTopicDetailResponse(BaseModel):
     visibility: str
     created_at: str
     updated_at: str
+    progress: TopicProgressSummary
+    items: list[LearningTopicItem]
     conversations: list[LearningTopicConversationItem]
+    flashcards: list[FlashcardItemResponse] = Field(default_factory=list)
 
 
 class CreateLearningTopicRequest(BaseModel):
@@ -119,10 +172,34 @@ class AddConversationToTopicRequest(BaseModel):
     conversation_id: str = Field(..., min_length=1)
 
 
+class AddNoteToTopicRequest(BaseModel):
+    note_id: str = Field(..., min_length=1)
+
+
 class ReorderLearningTopicConversationsRequest(BaseModel):
     """Full ordered list of conversation IDs currently in the topic. Must match membership exactly (permutation)."""
 
     conversation_ids: list[str] = Field(default_factory=list)
+
+
+class TopicReorderEntry(BaseModel):
+    type: Literal["conversation", "note"]
+    id: str = Field(..., min_length=1)
+
+
+class ReorderLearningTopicItemsRequest(BaseModel):
+    """Unified ordered list of conversations and notes in the topic. Must list each member exactly once."""
+
+    items: list[TopicReorderEntry] = Field(default_factory=list)
+
+
+class PatchTopicItemProgressRequest(BaseModel):
+    """ENH-04: Mark membership reviewed and/or set mastery (0–5) for one conversation or note in the topic."""
+
+    type: Literal["conversation", "note"]
+    id: str = Field(..., min_length=1)
+    reviewed: bool | None = None
+    mastery_level: int | None = Field(default=None, ge=0, le=5)
 
 
 class TopicReplayMessagePayload(BaseModel):
@@ -132,17 +209,35 @@ class TopicReplayMessagePayload(BaseModel):
     created_at: str
 
 
-class TopicReplayEntry(BaseModel):
+class TopicReplayMessageEntry(BaseModel):
+    type: Literal["message"] = "message"
     conversation_id: str
     conversation_title: str
     message: TopicReplayMessagePayload
+    reviewed_at: str | None = None
+    mastery_level: int = 0
+
+
+class TopicReplayNoteEntry(BaseModel):
+    type: Literal["note"] = "note"
+    note_id: str
+    title: str
+    content: str
+    reviewed_at: str | None = None
+    mastery_level: int = 0
+
+
+TopicReplayItem = Annotated[
+    Union[TopicReplayMessageEntry, TopicReplayNoteEntry],
+    Field(discriminator="type"),
+]
 
 
 class TopicReplayResponse(BaseModel):
     topic_id: str
     topic_title: str
-    total_messages: int
-    items: list[TopicReplayEntry]
+    total_items: int
+    items: list[TopicReplayItem]
 
 
 class TopicReplayMemberReplayCount(BaseModel):
@@ -178,6 +273,183 @@ def _parse_conversation_uuid_reorder(value: str) -> uuid.UUID:
         ) from None
 
 
+def _parse_note_uuid(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(value.strip())
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+
+def _parse_note_uuid_reorder(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(value.strip())
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid note id in items") from None
+
+
+def _note_content_preview(content: str, max_len: int = 200) -> str:
+    s = (content or "").strip()
+    if len(s) <= max_len:
+        return s
+    return s[:max_len]
+
+
+async def _next_unified_position(db: AsyncSession, topic_uuid: uuid.UUID) -> int:
+    max_c = (
+        await db.execute(
+            select(func.coalesce(func.max(LearningTopicConversation.position), -1)).where(
+                LearningTopicConversation.learning_topic_id == topic_uuid,
+            )
+        )
+    ).scalar_one()
+    max_n = (
+        await db.execute(
+            select(func.coalesce(func.max(LearningTopicNote.position), -1)).where(
+                LearningTopicNote.learning_topic_id == topic_uuid,
+            )
+        )
+    ).scalar_one()
+    return int(max(int(max_c), int(max_n))) + 1
+
+
+def _replay_membership_fields(
+    access: Literal["owner", "public"],
+    membership: LearningTopicConversation | LearningTopicNote,
+) -> tuple[str | None, int]:
+    """Guests do not see owner review/mastery metadata."""
+    if access == "public":
+        return None, 0
+    ra = membership.reviewed_at
+    reviewed_s = ra.isoformat() if ra else None
+    ml = int(membership.mastery_level or 0)
+    return reviewed_s, ml
+
+
+async def _build_topic_replay_sequence(
+    db: AsyncSession,
+    topic_uuid: uuid.UUID,
+    *,
+    access: Literal["owner", "public"],
+    unreviewed_only: bool = False,
+) -> list[TopicReplayItem]:
+    """Ordered replay steps: each user/assistant message is one step; each note is one step."""
+    membership_rows = (
+        await db.execute(
+            select(LearningTopicConversation, Conversation)
+            .join(Conversation, Conversation.id == LearningTopicConversation.conversation_id)
+            .where(LearningTopicConversation.learning_topic_id == topic_uuid)
+            .order_by(LearningTopicConversation.position.asc(), Conversation.created_at.asc())
+        )
+    ).all()
+
+    note_rows = (
+        await db.execute(
+            select(LearningTopicNote, Note)
+            .join(Note, Note.id == LearningTopicNote.note_id)
+            .where(LearningTopicNote.learning_topic_id == topic_uuid)
+            .order_by(LearningTopicNote.position.asc(), Note.updated_at.asc())
+        )
+    ).all()
+
+    merged: list[
+        tuple[int, Literal["c", "n"], LearningTopicConversation | LearningTopicNote, Conversation | Note]
+    ] = []
+    for membership, conversation in membership_rows:
+        merged.append((membership.position, "c", membership, conversation))
+    for membership, note in note_rows:
+        merged.append((membership.position, "n", membership, note))
+    merged.sort(key=lambda x: (x[0], x[1]))
+
+    out: list[TopicReplayItem] = []
+    for _pos, kind, membership, entity in merged:
+        if kind == "c":
+            conv = entity
+            assert isinstance(conv, Conversation)
+            assert isinstance(membership, LearningTopicConversation)
+            if access == "public" and conv.visibility != Visibility.public:
+                continue
+            if unreviewed_only and membership.reviewed_at is not None:
+                continue
+            reviewed_s, ml = _replay_membership_fields(access, membership)
+            msg_rows = (
+                await db.execute(
+                    select(Message)
+                    .where(Message.conversation_id == conv.id)
+                    .order_by(Message.created_at.asc())
+                )
+            ).scalars().all()
+            for msg in msg_rows:
+                if msg.role == MessageRole.system:
+                    continue
+                out.append(
+                    TopicReplayMessageEntry(
+                        conversation_id=str(conv.id),
+                        conversation_title=conv.title,
+                        message=TopicReplayMessagePayload(
+                            id=str(msg.id),
+                            role=str(msg.role),
+                            content=msg.content,
+                            created_at=msg.created_at.isoformat(),
+                        ),
+                        reviewed_at=reviewed_s,
+                        mastery_level=ml,
+                    )
+                )
+        else:
+            note = entity
+            assert isinstance(note, Note)
+            assert isinstance(membership, LearningTopicNote)
+            if access == "public" and note.visibility != Visibility.public:
+                continue
+            if unreviewed_only and membership.reviewed_at is not None:
+                continue
+            reviewed_s, ml = _replay_membership_fields(access, membership)
+            out.append(
+                TopicReplayNoteEntry(
+                    note_id=str(note.id),
+                    title=note.title,
+                    content=note.content,
+                    reviewed_at=reviewed_s,
+                    mastery_level=ml,
+                )
+            )
+    return out
+
+
+async def _topic_source_text_for_flashcards(db: AsyncSession, topic_uuid: uuid.UUID) -> str:
+    """Plain-text bundle of topic replay content (conversations + notes in order) for flashcard generation."""
+    items = await _build_topic_replay_sequence(db, topic_uuid, access="owner")
+    chunks: list[str] = []
+    for item in items:
+        if item.type == "message":
+            chunks.append(
+                f"## Conversation: {item.conversation_title}\n[{item.message.role}]\n{item.message.content}\n",
+            )
+        else:
+            chunks.append(f"## Note: {item.title}\n{item.content}\n")
+    return "\n".join(chunks)
+
+
+async def _compact_topic_positions(db: AsyncSession, topic: LearningTopic, topic_uuid: uuid.UUID) -> None:
+    conv_members = (
+        await db.execute(
+            select(LearningTopicConversation).where(LearningTopicConversation.learning_topic_id == topic_uuid),
+        )
+    ).scalars().all()
+    note_members = (
+        await db.execute(select(LearningTopicNote).where(LearningTopicNote.learning_topic_id == topic_uuid))
+    ).scalars().all()
+    merged: list[tuple[int, str, LearningTopicConversation | LearningTopicNote]] = []
+    for m in conv_members:
+        merged.append((m.position, "c", m))
+    for m in note_members:
+        merged.append((m.position, "n", m))
+    merged.sort(key=lambda x: (x[0], x[1]))
+    for i, (_, _, row) in enumerate(merged):
+        row.position = i
+    topic.updated_at = datetime.now(timezone.utc)
+
+
 async def _topic_detail_response(
     db: AsyncSession,
     topic_uuid: uuid.UUID,
@@ -209,6 +481,99 @@ async def _topic_detail_response(
         )
     ).all()
 
+    note_rows = (
+        await db.execute(
+            select(LearningTopicNote, Note)
+            .join(Note, Note.id == LearningTopicNote.note_id)
+            .where(LearningTopicNote.learning_topic_id == topic_uuid)
+            .order_by(LearningTopicNote.position.asc(), Note.updated_at.asc())
+        )
+    ).all()
+
+    merged: list[
+        tuple[int, Literal["c", "n"], LearningTopicConversation | LearningTopicNote, Conversation | Note]
+    ] = []
+    for membership, conversation in membership_rows:
+        merged.append((membership.position, "c", membership, conversation))
+    for membership, note in note_rows:
+        merged.append((membership.position, "n", membership, note))
+    merged.sort(key=lambda x: (x[0], x[1]))
+
+    items: list[LearningTopicItem] = []
+    legacy_conversations: list[LearningTopicConversationItem] = []
+    reviewed_count = 0
+    for _pos, _kind, _m, entity in merged:
+        if _kind == "c":
+            conv = entity
+            assert isinstance(conv, Conversation)
+            m = _m
+            assert isinstance(m, LearningTopicConversation)
+            if m.reviewed_at is not None:
+                reviewed_count += 1
+            ra = m.reviewed_at.isoformat() if m.reviewed_at else None
+            ml = int(m.mastery_level or 0)
+            legacy_conversations.append(
+                LearningTopicConversationItem(
+                    conversation_id=str(conv.id),
+                    position=m.position,
+                    title=conv.title,
+                    model=conv.model,
+                    tags=conv.tags or [],
+                    replay_count=conv.replay_count,
+                    created_at=conv.created_at.isoformat(),
+                    updated_at=conv.updated_at.isoformat(),
+                    reviewed_at=ra,
+                    mastery_level=ml,
+                )
+            )
+            items.append(
+                LearningTopicItemConversation(
+                    conversation_id=str(conv.id),
+                    position=m.position,
+                    title=conv.title,
+                    model=conv.model,
+                    tags=conv.tags or [],
+                    replay_count=conv.replay_count,
+                    created_at=conv.created_at.isoformat(),
+                    updated_at=conv.updated_at.isoformat(),
+                    reviewed_at=ra,
+                    mastery_level=ml,
+                )
+            )
+        else:
+            note = entity
+            assert isinstance(note, Note)
+            m = _m
+            assert isinstance(m, LearningTopicNote)
+            if m.reviewed_at is not None:
+                reviewed_count += 1
+            ra = m.reviewed_at.isoformat() if m.reviewed_at else None
+            ml = int(m.mastery_level or 0)
+            items.append(
+                LearningTopicItemNote(
+                    note_id=str(note.id),
+                    position=m.position,
+                    title=note.title,
+                    content_preview=_note_content_preview(note.content, 200),
+                    tags=note.tags or [],
+                    updated_at=note.updated_at.isoformat(),
+                    reviewed_at=ra,
+                    mastery_level=ml,
+                )
+            )
+
+    flashcards_out: list[FlashcardItemResponse] = []
+    raw_fc = topic.flashcards
+    if isinstance(raw_fc, list):
+        for row in raw_fc:
+            if not isinstance(row, dict):
+                continue
+            q = str(row.get("question", "")).strip()
+            a = str(row.get("answer", "")).strip()
+            if q and a:
+                flashcards_out.append(FlashcardItemResponse(question=q, answer=a))
+
+    total_items = len(items)
     return LearningTopicDetailResponse(
         id=str(topic.id),
         title=topic.title,
@@ -216,20 +581,81 @@ async def _topic_detail_response(
         visibility=topic.visibility,
         created_at=topic.created_at.isoformat(),
         updated_at=topic.updated_at.isoformat(),
-        conversations=[
-            LearningTopicConversationItem(
-                conversation_id=str(conversation.id),
-                position=membership.position,
-                title=conversation.title,
-                model=conversation.model,
-                tags=conversation.tags or [],
-                replay_count=conversation.replay_count,
-                created_at=conversation.created_at.isoformat(),
-                updated_at=conversation.updated_at.isoformat(),
-            )
-            for membership, conversation in membership_rows
-        ],
+        progress=TopicProgressSummary(reviewed=reviewed_count, total=total_items),
+        items=items,
+        conversations=legacy_conversations,
+        flashcards=flashcards_out,
     )
+
+
+async def _learning_topic_merged_for_export(
+    db: AsyncSession,
+    topic_uuid: uuid.UUID,
+    owner_uuid: uuid.UUID,
+) -> tuple[LearningTopic, list[tuple[Literal["conversation", "note"], Conversation | Note]]] | None:
+    """Owner topic + ordered items with full conversation messages loaded for export."""
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        return None
+
+    membership_rows = (
+        await db.execute(
+            select(LearningTopicConversation, Conversation)
+            .join(Conversation, Conversation.id == LearningTopicConversation.conversation_id)
+            .where(LearningTopicConversation.learning_topic_id == topic_uuid)
+            .order_by(
+                LearningTopicConversation.position.asc(),
+                Conversation.created_at.asc(),
+            )
+        )
+    ).all()
+
+    note_rows = (
+        await db.execute(
+            select(LearningTopicNote, Note)
+            .join(Note, Note.id == LearningTopicNote.note_id)
+            .where(LearningTopicNote.learning_topic_id == topic_uuid)
+            .order_by(LearningTopicNote.position.asc(), Note.updated_at.asc())
+        )
+    ).all()
+
+    merged: list[tuple[int, Literal["c", "n"], Conversation | Note]] = []
+    for _m, conv in membership_rows:
+        merged.append((_m.position, "c", conv))
+    for _m, note in note_rows:
+        merged.append((_m.position, "n", note))
+    merged.sort(key=lambda x: (x[0], x[1]))
+
+    conv_ids = [e.id for _p, k, e in merged if k == "c"]
+    conv_with_msgs: dict[uuid.UUID, Conversation] = {}
+    if conv_ids:
+        conv_result = await db.execute(
+            select(Conversation)
+            .where(Conversation.id.in_(conv_ids))
+            .options(selectinload(Conversation.messages))
+        )
+        for c in conv_result.scalars().unique().all():
+            conv_with_msgs[c.id] = c
+
+    out: list[tuple[Literal["conversation", "note"], Conversation | Note]] = []
+    for _pos, kind, entity in merged:
+        if kind == "c":
+            assert isinstance(entity, Conversation)
+            loaded = conv_with_msgs.get(entity.id)
+            if loaded is None:
+                continue
+            out.append(("conversation", loaded))
+        else:
+            assert isinstance(entity, Note)
+            out.append(("note", entity))
+    return (topic, out)
 
 
 @router.get("", response_model=list[LearningTopicListItem])
@@ -539,7 +965,7 @@ async def get_public_learning_topic_replay(
     topic_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> TopicReplayResponse:
-    """Step-through replay for guests: public topic only; user/assistant messages from public conversations in topic order."""
+    """Step-through replay for guests: public topic; public conversations and public notes in unified order."""
     topic_uuid = _parse_topic_uuid(topic_id)
     topic = (
         await db.execute(select(LearningTopic).where(LearningTopic.id == topic_uuid))
@@ -549,39 +975,59 @@ async def get_public_learning_topic_replay(
     if topic.visibility != Visibility.public:
         raise HTTPException(status_code=403, detail="This learning topic is private")
 
-    stmt = (
-        select(Message, Conversation)
-        .join(Conversation, Message.conversation_id == Conversation.id)
-        .join(
-            LearningTopicConversation,
-            (LearningTopicConversation.conversation_id == Conversation.id)
-            & (LearningTopicConversation.learning_topic_id == topic_uuid),
-        )
-        .where(Conversation.visibility == Visibility.public)
-        .order_by(LearningTopicConversation.position.asc(), Message.created_at.asc())
-    )
-    rows = (await db.execute(stmt)).all()
-
-    items = [
-        TopicReplayEntry(
-            conversation_id=str(conv.id),
-            conversation_title=conv.title,
-            message=TopicReplayMessagePayload(
-                id=str(msg.id),
-                role=str(msg.role),
-                content=msg.content,
-                created_at=msg.created_at.isoformat(),
-            ),
-        )
-        for msg, conv in rows
-        if msg.role != MessageRole.system
-    ]
+    items = await _build_topic_replay_sequence(db, topic_uuid, access="public")
 
     return TopicReplayResponse(
         topic_id=str(topic.id),
         topic_title=topic.title,
-        total_messages=len(items),
+        total_items=len(items),
         items=items,
+    )
+
+
+@router.get("/{topic_id}/export", response_class=Response)
+async def export_learning_topic(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    format: Literal["md", "pdf"] = Query(
+        default="md",
+        description="Export as Markdown (.md) or PDF",
+    ),
+) -> Response:
+    """Export topic as a single Markdown or PDF (conversations as transcripts, notes as markdown). Owner only."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+    loaded = await _learning_topic_merged_for_export(db, topic_uuid, owner_uuid)
+    if loaded is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    topic, sections = loaded
+    md = learning_topic_to_markdown(
+        title=topic.title,
+        description=topic.description,
+        created_at=topic.created_at,
+        updated_at=topic.updated_at,
+        merged=sections,
+    )
+    base = sanitize_filename(topic.title)
+    if format == "md":
+        return PlainTextResponse(
+            content=md,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{base}.md"'},
+        )
+    try:
+        pdf_bytes = markdown_to_pdf_bytes(md)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not generate PDF. Try Markdown export instead.",
+        ) from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{base}.pdf"'},
     )
 
 
@@ -593,6 +1039,133 @@ async def get_learning_topic(
 ) -> LearningTopicDetailResponse:
     owner_uuid = uuid.UUID(current_user.sub)
     topic_uuid = _parse_topic_uuid(topic_id)
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.patch("/{topic_id}/items/progress", response_model=LearningTopicDetailResponse)
+async def patch_learning_topic_item_progress(
+    topic_id: str,
+    body: PatchTopicItemProgressRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """ENH-04: Set reviewed timestamp and/or mastery for one topic member (conversation or note)."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    if body.type == "conversation":
+        conv_uuid = _parse_conversation_uuid(body.id.strip())
+        result = await db.execute(
+            select(LearningTopicConversation).where(
+                LearningTopicConversation.learning_topic_id == topic_uuid,
+                LearningTopicConversation.conversation_id == conv_uuid,
+            )
+        )
+        link = result.scalar_one_or_none()
+        if link is None:
+            raise HTTPException(status_code=404, detail="Conversation is not in this topic")
+    else:
+        note_uuid = _parse_note_uuid(body.id.strip())
+        result = await db.execute(
+            select(LearningTopicNote).where(
+                LearningTopicNote.learning_topic_id == topic_uuid,
+                LearningTopicNote.note_id == note_uuid,
+            )
+        )
+        link = result.scalar_one_or_none()
+        if link is None:
+            raise HTTPException(status_code=404, detail="Note is not in this topic")
+
+    now = datetime.now(timezone.utc)
+    if body.reviewed is True:
+        link.reviewed_at = now
+    elif body.reviewed is False:
+        link.reviewed_at = None
+
+    if body.mastery_level is not None:
+        link.mastery_level = body.mastery_level
+
+    topic.updated_at = now
+    await db.commit()
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.post("/{topic_id}/flashcards/generate", response_model=LearningTopicDetailResponse)
+async def generate_learning_topic_flashcards(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """ENH-02: One AI call with structured output; replaces any existing flashcards."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    source = await _topic_source_text_for_flashcards(db, topic_uuid)
+    cards = await generate_flashcards_from_source(topic_title=topic.title, source_material=source)
+    topic.flashcards = cards
+    topic.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.delete("/{topic_id}/flashcards", response_model=LearningTopicDetailResponse)
+async def discard_learning_topic_flashcards(
+    topic_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """ENH-02: Remove stored flashcards for the topic."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    topic.flashcards = None
+    topic.updated_at = datetime.now(timezone.utc)
+    await db.commit()
 
     detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
     if detail is None:
@@ -658,8 +1231,9 @@ async def get_learning_topic_replay(
     topic_id: str,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    unreviewed_only: bool = Query(False, description="ENH-04: Only steps for items not yet marked reviewed."),
 ) -> TopicReplayResponse:
-    """Return user/assistant messages in topic order (no system prompts); conversations by position, then chronological within each."""
+    """Replay sequence: conversations (user/assistant messages, no system) and notes as single-step slides, in unified topic order."""
     owner_uuid = uuid.UUID(current_user.sub)
     topic_uuid = _parse_topic_uuid(topic_id)
 
@@ -674,37 +1248,17 @@ async def get_learning_topic_replay(
     if topic is None:
         raise HTTPException(status_code=404, detail="Learning topic not found")
 
-    stmt = (
-        select(Message, Conversation)
-        .join(Conversation, Message.conversation_id == Conversation.id)
-        .join(
-            LearningTopicConversation,
-            (LearningTopicConversation.conversation_id == Conversation.id)
-            & (LearningTopicConversation.learning_topic_id == topic_uuid),
-        )
-        .order_by(LearningTopicConversation.position.asc(), Message.created_at.asc())
+    items = await _build_topic_replay_sequence(
+        db,
+        topic_uuid,
+        access="owner",
+        unreviewed_only=unreviewed_only,
     )
-    rows = (await db.execute(stmt)).all()
-
-    items = [
-        TopicReplayEntry(
-            conversation_id=str(conv.id),
-            conversation_title=conv.title,
-            message=TopicReplayMessagePayload(
-                id=str(msg.id),
-                role=str(msg.role),
-                content=msg.content,
-                created_at=msg.created_at.isoformat(),
-            ),
-        )
-        for msg, conv in rows
-        if msg.role != MessageRole.system
-    ]
 
     return TopicReplayResponse(
         topic_id=str(topic.id),
         topic_title=topic.title,
-        total_messages=len(items),
+        total_items=len(items),
         items=items,
     )
 
@@ -755,14 +1309,14 @@ async def increment_learning_topic_replay_counts(
     return TopicReplayIncrementResponse(conversation_replay_counts=counts)
 
 
-@router.patch("/{topic_id}/order", response_model=LearningTopicDetailResponse)
-async def reorder_learning_topic_conversations(
+@router.post("/{topic_id}/reorder", response_model=LearningTopicDetailResponse)
+async def reorder_learning_topic_items(
     topic_id: str,
-    body: ReorderLearningTopicConversationsRequest,
+    body: ReorderLearningTopicItemsRequest,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> LearningTopicDetailResponse:
-    """Persist a new order for conversations in the topic. Payload must list every member exactly once."""
+    """Persist a new unified order for conversations and notes. Payload must list every member exactly once."""
     owner_uuid = uuid.UUID(current_user.sub)
     topic_uuid = _parse_topic_uuid(topic_id)
 
@@ -777,42 +1331,53 @@ async def reorder_learning_topic_conversations(
     if topic is None:
         raise HTTPException(status_code=404, detail="Learning topic not found")
 
-    membership_rows = (
+    conv_links = (
         await db.execute(
             select(LearningTopicConversation).where(
                 LearningTopicConversation.learning_topic_id == topic_uuid,
             )
         )
     ).scalars().all()
+    note_links = (
+        await db.execute(select(LearningTopicNote).where(LearningTopicNote.learning_topic_id == topic_uuid))
+    ).scalars().all()
 
-    current_ids = {str(m.conversation_id) for m in membership_rows}
+    expected_conv = {str(m.conversation_id) for m in conv_links}
+    expected_note = {str(m.note_id) for m in note_links}
 
-    parsed_ids: list[uuid.UUID] = []
-    seen: set[uuid.UUID] = set()
-    for raw in body.conversation_ids:
-        cid = _parse_conversation_uuid_reorder(raw)
-        if cid in seen:
-            raise HTTPException(
-                status_code=422,
-                detail="conversation_ids contains duplicates",
-            )
-        seen.add(cid)
-        parsed_ids.append(cid)
+    seen_keys: set[tuple[str, str]] = set()
+    parsed: list[tuple[Literal["conversation", "note"], uuid.UUID]] = []
+    for entry in body.items:
+        key = (entry.type, entry.id.strip())
+        if key in seen_keys:
+            raise HTTPException(status_code=422, detail="items contains duplicates")
+        seen_keys.add(key)
+        if entry.type == "conversation":
+            cid = _parse_conversation_uuid_reorder(entry.id)
+            parsed.append(("conversation", cid))
+        else:
+            nid = _parse_note_uuid_reorder(entry.id)
+            parsed.append(("note", nid))
 
-    if len(parsed_ids) != len(current_ids):
+    got_conv = {str(uid) for t, uid in parsed if t == "conversation"}
+    got_note = {str(uid) for t, uid in parsed if t == "note"}
+
+    if got_conv != expected_conv or got_note != expected_note:
         raise HTTPException(
             status_code=422,
-            detail="conversation_ids must include each conversation in the topic exactly once",
+            detail="items must list each conversation and note in this topic exactly once",
         )
-    if set(str(x) for x in parsed_ids) != current_ids:
-        raise HTTPException(
-            status_code=422,
-            detail="conversation_ids must match the conversations in this topic",
-        )
+    if len(parsed) != len(expected_conv) + len(expected_note):
+        raise HTTPException(status_code=422, detail="items must list each member exactly once")
 
-    links_by_conv = {m.conversation_id: m for m in membership_rows}
-    for new_pos, conv_id in enumerate(parsed_ids):
-        links_by_conv[conv_id].position = new_pos
+    conv_by_id = {m.conversation_id: m for m in conv_links}
+    note_by_id = {m.note_id: m for m in note_links}
+
+    for new_pos, (kind, uid) in enumerate(parsed):
+        if kind == "conversation":
+            conv_by_id[uid].position = new_pos
+        else:
+            note_by_id[uid].position = new_pos
 
     topic.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -821,6 +1386,34 @@ async def reorder_learning_topic_conversations(
     if detail is None:
         raise HTTPException(status_code=404, detail="Learning topic not found")
     return detail
+
+
+@router.patch("/{topic_id}/order", response_model=LearningTopicDetailResponse)
+async def reorder_learning_topic_conversations(
+    topic_id: str,
+    body: ReorderLearningTopicConversationsRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """Backward-compatible alias: reorder conversations only. Use POST …/reorder when the topic includes notes."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+
+    note_count = (
+        await db.execute(
+            select(func.count()).select_from(LearningTopicNote).where(LearningTopicNote.learning_topic_id == topic_uuid)
+        )
+    ).scalar_one()
+    if int(note_count or 0) > 0:
+        raise HTTPException(
+            status_code=422,
+            detail="This topic includes notes; use POST /learning-topics/{topic_id}/reorder with a unified items list.",
+        )
+
+    unified = ReorderLearningTopicItemsRequest(
+        items=[TopicReorderEntry(type="conversation", id=x) for x in body.conversation_ids],
+    )
+    return await reorder_learning_topic_items(topic_id, unified, current_user, db)
 
 
 @router.post("/{topic_id}/conversations", response_model=LearningTopicDetailResponse, status_code=201)
@@ -871,13 +1464,7 @@ async def add_conversation_to_learning_topic(
             detail="This conversation is already in the topic",
         )
 
-    max_pos_result = await db.execute(
-        select(func.max(LearningTopicConversation.position)).where(
-            LearningTopicConversation.learning_topic_id == topic_uuid
-        )
-    )
-    max_pos = max_pos_result.scalar_one()
-    next_position = (max_pos if max_pos is not None else -1) + 1
+    next_position = await _next_unified_position(db, topic_uuid)
 
     topic.updated_at = datetime.now(timezone.utc)
     link = LearningTopicConversation(
@@ -938,25 +1525,114 @@ async def remove_conversation_from_learning_topic(
     await db.delete(link)
     await db.flush()
 
-    remaining = (
+    await _compact_topic_positions(db, topic, topic_uuid)
+
+    await db.commit()
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.post("/{topic_id}/notes", response_model=LearningTopicDetailResponse, status_code=201)
+async def add_note_to_learning_topic(
+    topic_id: str,
+    body: AddNoteToTopicRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """Add a saved note to a topic. Appends to the end of the unified order."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+    note_uuid = _parse_note_uuid(body.note_id.strip())
+
+    topic = (
         await db.execute(
-            select(LearningTopicConversation, Conversation)
-            .join(
-                Conversation,
-                Conversation.id == LearningTopicConversation.conversation_id,
-            )
-            .where(LearningTopicConversation.learning_topic_id == topic_uuid)
-            .order_by(
-                LearningTopicConversation.position.asc(),
-                Conversation.created_at.asc(),
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
             )
         )
-    ).all()
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
 
-    for new_pos, (membership, _) in enumerate(remaining):
-        membership.position = new_pos
+    note = (await db.execute(select(Note).where(Note.id == note_uuid))).scalar_one_or_none()
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    if note.owner_id != owner_uuid:
+        raise HTTPException(status_code=403, detail="You can only add your own notes to a topic")
 
+    existing = (
+        await db.execute(
+            select(LearningTopicNote).where(
+                LearningTopicNote.learning_topic_id == topic_uuid,
+                LearningTopicNote.note_id == note_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="This note is already in the topic")
+
+    next_position = await _next_unified_position(db, topic_uuid)
     topic.updated_at = datetime.now(timezone.utc)
+    db.add(
+        LearningTopicNote(
+            learning_topic_id=topic_uuid,
+            note_id=note_uuid,
+            position=next_position,
+        )
+    )
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="This note is already in the topic") from None
+
+    detail = await _topic_detail_response(db, topic_uuid, owner_uuid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+    return detail
+
+
+@router.delete("/{topic_id}/notes/{note_id}", response_model=LearningTopicDetailResponse)
+async def remove_note_from_learning_topic(
+    topic_id: str,
+    note_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LearningTopicDetailResponse:
+    """Remove a note from a topic. The note itself is not deleted."""
+    owner_uuid = uuid.UUID(current_user.sub)
+    topic_uuid = _parse_topic_uuid(topic_id)
+    n_uuid = _parse_note_uuid(note_id)
+
+    topic = (
+        await db.execute(
+            select(LearningTopic).where(
+                LearningTopic.id == topic_uuid,
+                LearningTopic.owner_id == owner_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Learning topic not found")
+
+    result = await db.execute(
+        select(LearningTopicNote).where(
+            LearningTopicNote.learning_topic_id == topic_uuid,
+            LearningTopicNote.note_id == n_uuid,
+        )
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status_code=404, detail="Note is not in this topic")
+
+    await db.delete(link)
+    await db.flush()
+    await _compact_topic_positions(db, topic, topic_uuid)
     await db.commit()
 
     detail = await _topic_detail_response(db, topic_uuid, owner_uuid)

@@ -19,3 +19,7 @@ sqlalchemy[asyncio]==2.0.38
 asyncpg==0.30.0
 alembic==1.14.1
 pgvector==0.3.6
+
+# Learning topic export (Markdown + PDF)
+markdown==3.7
+xhtml2pdf==0.2.16
