@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { ThemeProvider } from './context/ThemeContext'
 import { LoginPage } from './pages/LoginPage'
@@ -11,7 +11,11 @@ import { PublicLearningTopicPage } from './components/PublicLearningTopicPage'
 import { FeedPage } from './components/FeedPage'
 import { HelpPopup } from './components/HelpPopup'
 import { ReportsPage } from './components/ReportsPage'
+import { isV2Path } from './v2/routing'
+import { TryV2Banner } from './v2/components/TryV2Banner'
 import type { Message } from './types/chat'
+
+const AppShellV2 = lazy(() => import('./v2/AppShellV2').then((m) => ({ default: m.AppShellV2 })))
 
 type AppPage =
   | { name: 'chat'; initialMessages?: Message[]; continuedFromTitle?: string }
@@ -57,6 +61,31 @@ function AppShell() {
   const { user, isLoading } = useAuth()
   const [page, setPage] = useState<AppPage>(() => parsePath(window.location.pathname))
   const [helpPopupOpen, setHelpPopupOpen] = useState(false)
+  const [isV2, setIsV2] = useState(() => isV2Path(window.location.pathname))
+
+  // Keep the v2 flag in sync with the URL (user may navigate via history
+  // from classic shell to /v2 and back).
+  useEffect(() => {
+    function onPop() {
+      setIsV2(isV2Path(window.location.pathname))
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  if (isV2) {
+    return (
+      <Suspense
+        fallback={
+          <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+          </div>
+        }
+      >
+        <AppShellV2 />
+      </Suspense>
+    )
+  }
 
   // Sync URL when page changes.
   useEffect(() => {
@@ -169,6 +198,7 @@ function AppShell() {
           onOpenReports={user.role === 'administrator' ? () => setPage({ name: 'reports' }) : undefined}
         />
         <HelpPopup open={helpPopupOpen} onOpen={() => setHelpPopupOpen(true)} onClose={() => setHelpPopupOpen(false)} />
+        <TryV2Banner />
       </>
     )
   }
@@ -187,6 +217,7 @@ function AppShell() {
           onOpenReports={user.role === 'administrator' ? () => setPage({ name: 'reports' }) : undefined}
         />
         <HelpPopup open={helpPopupOpen} onOpen={() => setHelpPopupOpen(true)} onClose={() => setHelpPopupOpen(false)} />
+        <TryV2Banner />
       </>
     )
   }
@@ -203,6 +234,7 @@ function AppShell() {
         continuedFromTitle={chatPage.continuedFromTitle}
       />
       <HelpPopup open={helpPopupOpen} onOpen={() => setHelpPopupOpen(true)} onClose={() => setHelpPopupOpen(false)} />
+      <TryV2Banner />
     </>
   )
 }

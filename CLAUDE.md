@@ -171,6 +171,24 @@ FastAPI → OpenAI API
 - `src/types/` — TypeScript types (`Message`, `AuthUser`, `Conversation`, `Collection`, `LearningTopic`, `Reports`, etc.)
 - `src/config/features.ts` — feature flags
 
+### V2 UI shell (`src/v2/`)
+A redesigned UI mounted at `/v2` that coexists with the classic shell at `/`.
+`App.tsx` lazy-loads `AppShellV2` when `isV2Path(location.pathname)` matches;
+public share routes (`/c/:id`, `/collections/public/:id`, `/learning-topics/public/:id`)
+continue to render in the classic shell.
+
+- `AppShellV2.tsx` — root v2 layout; renders `IconRail`, active section view, `UserMenu`, `HelpPopup`, and `CommandPalette`. Enforces admin-only Reports. Wires global shortcuts: Ctrl/Cmd+K (palette), Ctrl/Cmd+B (collapse context column), Ctrl/Cmd+N (context-aware new), `/` (focus search / chat input).
+- `routing.ts` + `hooks/useV2Route.ts` — v2 URL parsing / generation (`V2Route` discriminated union) and state sync with `pushState`/`popstate`.
+- `components/shell/` — shell primitives: `IconRail` (primary nav + theme/help/avatar), `ContextColumn` (collapsible contextual sidebar), `UserMenu` (account popover with usage, plan, sign out, delete, link back to classic), `CommandPalette` (Ctrl/Cmd+K palette with sections + recents + actions), `Placeholder`, `icons.tsx`.
+- `components/chat/` — `ChatView` (reuses `useChat` + `streamChatReply` + classic `MessageBubble`/`ChatInput`/`TypingIndicator`/`SaveDialog`), `RecentChatsList`, `CustomizePopover`, `ChatSettings.ts`.
+- `components/library/` — master-detail `LibraryView` with tabs (Conversations / Notes / Topics), `FilterDrawer` (search mode, scope, sort, tags), result cards (`ConversationResultCard`, `NoteResultCard`, `TopicResultCard`), detail panes (`ConversationDetailPane`, `NoteDetailPane`).
+- `components/notes/` — `NotesView` with pinned/recent grouping, tag filter, and the classic `NoteEditor` embedded as the detail pane.
+- `components/topics/` — `TopicsView` with inline progress bars, `TopicDetailPane` (replay / flashcards / export / visibility / share / delete), `TopicProgressStrip`.
+- `components/feed/` — v2-native `FeedView` that calls `/api/feed` and `/api/learning-topics/public` directly and renders without the classic header chrome.
+- `components/reports/` — v2-native `ReportsView` that embeds the admin user and model/cost tables within the v2 shell.
+- `components/TryV2Banner.tsx` — dismissible bottom-right toast shown in the classic shell inviting users to try `/v2`; dismissal persisted in `localStorage`.
+- `hooks/` — `useV2Route`, `useRecentChats`, `useDebounce`.
+
 ## Data Model
 
 ```
