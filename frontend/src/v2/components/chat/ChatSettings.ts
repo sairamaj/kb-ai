@@ -1,7 +1,6 @@
 /**
  * Shared chat-settings types + template presets.
- * Extracted from frontend/src/components/ChatPage.tsx so the v2 ChatView
- * can reuse the same localStorage key (kb_chat_settings) and providers shape.
+ * Persisted to localStorage under `kb_chat_settings`.
  */
 
 export type ProviderId = 'openai' | 'gemini'

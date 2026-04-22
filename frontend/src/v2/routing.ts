@@ -1,7 +1,8 @@
 /**
- * Routing for the v2 shell. All v2 routes are namespaced under `/v2`.
- * Existing public share routes stay in the classic shell and are intentionally
- * not handled here.
+ * Routing for the main app shell. Routes are served at the root.
+ * Public share routes (`/c/:id`, `/collections/public/:id`,
+ * `/learning-topics/public/:id`) are handled separately in `App.tsx`
+ * and never reach this parser.
  */
 
 export type V2Section = 'chat' | 'library' | 'notes' | 'topics' | 'feed' | 'reports'
@@ -18,23 +19,16 @@ export type V2Route =
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export const V2_PREFIX = '/v2'
-
-export function isV2Path(pathname: string): boolean {
-  return pathname === V2_PREFIX || pathname.startsWith(`${V2_PREFIX}/`)
-}
-
 export function parsePathV2(pathname: string): V2Route {
   const stripped = pathname.replace(/\/+$/, '') // trim trailing slash
   const parts = stripped.split('/').filter(Boolean) // remove empty
-  // parts[0] === 'v2'
-  const section = parts[1] ?? 'chat'
+  const section = parts[0] ?? 'chat'
 
   if (section === 'library') {
-    const tabRaw = parts[2] ?? 'conversations'
+    const tabRaw = parts[1] ?? 'conversations'
     const tab: LibraryTab =
       tabRaw === 'notes' || tabRaw === 'topics' ? tabRaw : 'conversations'
-    const selectedId = parts[3]
+    const selectedId = parts[2]
     if (selectedId && UUID_RE.test(selectedId)) {
       return { name: 'library', tab, selectedId }
     }
@@ -42,7 +36,7 @@ export function parsePathV2(pathname: string): V2Route {
   }
 
   if (section === 'notes') {
-    const noteId = parts[2]
+    const noteId = parts[1]
     if (noteId && UUID_RE.test(noteId)) {
       return { name: 'notes', noteId }
     }
@@ -50,7 +44,7 @@ export function parsePathV2(pathname: string): V2Route {
   }
 
   if (section === 'topics') {
-    const topicId = parts[2]
+    const topicId = parts[1]
     if (topicId && UUID_RE.test(topicId)) {
       return { name: 'topics', topicId }
     }
@@ -60,9 +54,8 @@ export function parsePathV2(pathname: string): V2Route {
   if (section === 'feed') return { name: 'feed' }
   if (section === 'reports') return { name: 'reports' }
 
-  // Default: chat (optionally with conversation id)
   if (section === 'chat') {
-    const convId = parts[2]
+    const convId = parts[1]
     if (convId && UUID_RE.test(convId)) {
       return { name: 'chat', conversationId: convId }
     }
@@ -75,22 +68,20 @@ export function parsePathV2(pathname: string): V2Route {
 export function routeToPath(route: V2Route): string {
   switch (route.name) {
     case 'chat':
-      return route.conversationId
-        ? `${V2_PREFIX}/chat/${route.conversationId}`
-        : `${V2_PREFIX}/chat`
+      return route.conversationId ? `/chat/${route.conversationId}` : '/'
     case 'library':
       if (route.selectedId) {
-        return `${V2_PREFIX}/library/${route.tab}/${route.selectedId}`
+        return `/library/${route.tab}/${route.selectedId}`
       }
-      return `${V2_PREFIX}/library/${route.tab}`
+      return `/library/${route.tab}`
     case 'notes':
-      return route.noteId ? `${V2_PREFIX}/notes/${route.noteId}` : `${V2_PREFIX}/notes`
+      return route.noteId ? `/notes/${route.noteId}` : '/notes'
     case 'topics':
-      return route.topicId ? `${V2_PREFIX}/topics/${route.topicId}` : `${V2_PREFIX}/topics`
+      return route.topicId ? `/topics/${route.topicId}` : '/topics'
     case 'feed':
-      return `${V2_PREFIX}/feed`
+      return '/feed'
     case 'reports':
-      return `${V2_PREFIX}/reports`
+      return '/reports'
   }
 }
 

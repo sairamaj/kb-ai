@@ -324,7 +324,7 @@ export function TopicDetailPane({ topicId, navigate, onDeleted, onChanged }: Pro
           </h3>
           {items.length === 0 && (
             <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-              This topic is empty. Use the classic Library view to add conversations or notes.
+              This topic is empty. Add conversations or notes from the Library view.
             </div>
           )}
           <ol className="flex flex-col gap-2">

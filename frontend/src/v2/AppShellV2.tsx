@@ -44,10 +44,17 @@ export function AppShellV2() {
 
   const [ctxCollapsed, setCtxCollapsed] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [helpOpen, setHelpOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(() => window.location.pathname === '/help')
   const [commandOpen, setCommandOpen] = useState(false)
 
-  // Admin-only guard for reports (mirrors classic shell behaviour).
+  // Deep-link /help: open help popup and normalize URL back to the current section.
+  useEffect(() => {
+    if (window.location.pathname === '/help') {
+      window.history.replaceState({}, '', '/')
+    }
+  }, [])
+
+  // Admin-only guard for reports.
   useEffect(() => {
     if (!user || isLoading) return
     if (route.name === 'reports' && user.role !== 'administrator') {

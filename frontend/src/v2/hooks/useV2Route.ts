@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { parsePathV2, routeToPath, V2Route } from '../routing'
 
 /**
- * Manages v2 route state synchronized with the browser URL.
- * Mirrors the pushState/popstate pattern used in the classic shell (frontend/src/App.tsx).
+ * Manages route state synchronized with the browser URL via pushState/popstate.
  */
 export function useV2Route() {
   const [route, setRouteState] = useState<V2Route>(() => parsePathV2(window.location.pathname))

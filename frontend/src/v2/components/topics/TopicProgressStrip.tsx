@@ -15,9 +15,7 @@ function progressFromDetail(detail: LearningTopicDetail): { reviewed: number; to
 }
 
 /**
- * Mirrors the classic TopicStudyProgressStrip visual.
- * Extracted as its own component so the v2 detail pane can reuse the styling
- * without pulling in classic LibraryPage.
+ * Compact "study progress" strip for the learning-topic detail pane.
  */
 export function TopicProgressStrip({ detail }: Props) {
   const tp = progressFromDetail(detail)

@@ -11,9 +11,8 @@ interface Props {
 
 /**
  * User menu popover triggered from the icon rail avatar.
- * Centralizes what used to live scattered across the classic header:
- * display name, role, usage, plan limits, sign out, delete account,
- * and a link back to the classic UI.
+ * Surfaces display name, role, usage, plan limits, sign out,
+ * and delete account.
  */
 export function UserMenu({ open, onClose }: Props) {
   const { user, logout, deleteAccount } = useAuth()
@@ -97,16 +96,10 @@ export function UserMenu({ open, onClose }: Props) {
       )}
 
       <div className="mt-4 border-t border-gray-200 pt-3 dark:border-gray-800">
-        <a
-          href="/"
-          className="block w-full rounded-md px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-        >
-          Back to classic UI
-        </a>
         <button
           type="button"
           onClick={() => void logout()}
-          className="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
         >
           <span className="h-3.5 w-3.5">
             <LogoutIcon />

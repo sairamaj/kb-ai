@@ -13,9 +13,8 @@ interface Props {
 }
 
 /**
- * Compact popover anchored above the chat input.
- * Replaces the classic shell's full-width "Customize" panel that used to sit
- * below the header and crowded the chat area.
+ * Compact popover anchored above the chat input for tweaking model, system
+ * prompt, custom instructions, and template.
  */
 export function CustomizePopover({
   open,
