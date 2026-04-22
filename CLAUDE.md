@@ -140,28 +140,26 @@ FastAPI → OpenAI API
 - `src/hooks/useChat.ts` — `useChat()` (message state) + `streamChatReply()` (SSE via fetch + ReadableStream)
 
 ### Pages & routing
-- `src/pages/LoginPage.tsx` — OAuth login buttons (Google, GitHub)
-- `src/components/ChatPage.tsx` — main chat interface
-- `src/components/LibraryPage.tsx` — saved conversations list/search
-- `src/components/FeedPage.tsx` — activity feed
-- `src/components/ReportsPage.tsx` — analytics/reports
-- `src/components/HelpPage.tsx` — help & documentation
-- `src/components/ConversationDetailPage.tsx` — view/edit saved conversation
+- `src/App.tsx` — top-level shell. Renders public-share routes (`/c/:id`, `/collections/public/:id`, `/learning-topics/public/:id`) directly; everything else lazy-loads the main app shell (`src/v2/AppShellV2.tsx`).
+- `src/pages/LoginPage.tsx` — OAuth login buttons (Google, GitHub), shown by `AppShellV2` when the user is unauthenticated.
 - `src/components/PublicConversationPage.tsx` — publicly shared conversation view (no login)
 - `src/components/PublicCollectionPage.tsx` — publicly shared collection view
 - `src/components/PublicLearningTopicPage.tsx` — publicly shared learning topic
 
-### Components
+### Shared UI components (used by the main shell + public pages)
 - `src/components/MessageBubble.tsx` — message display (user/assistant)
 - `src/components/ChatInput.tsx` — input textarea + send button
 - `src/components/TypingIndicator.tsx` — "..." animation while waiting for reply
 - `src/components/EmptyState.tsx` — no conversations UI
 - `src/components/ReplayMode.tsx` — step-through saved conversation
 - `src/components/TopicReplayMode.tsx` — replay for learning topics
+- `src/components/FlashcardMode.tsx` — flashcard-style topic review
 - `src/components/SaveDialog.tsx` — save/update conversation to library
+- `src/components/NoteEditor.tsx` — rich note editor (embedded in library + notes views)
+- `src/components/SummarizeWithAiPanel.tsx` — AI summarize side-panel used inside `NoteEditor`
 - `src/components/HelpChat.tsx` — embedded help chat
 - `src/components/HelpPopup.tsx` — help popup overlay
-- `src/components/ThemeToggle.tsx` — light/dark mode button
+- `src/components/ThemeToggle.tsx` — light/dark mode button (used on login + public pages)
 - `src/components/UsageDisplay.tsx` — user's token usage stats
 - `src/components/LimitReachedDialog.tsx` — quota/limit exceeded notification
 
@@ -170,6 +168,20 @@ FastAPI → OpenAI API
 - `src/api/errors.ts` — error handling
 - `src/types/` — TypeScript types (`Message`, `AuthUser`, `Conversation`, `Collection`, `LearningTopic`, `Reports`, etc.)
 - `src/config/features.ts` — feature flags
+
+### Main UI shell (`src/v2/`)
+`AppShellV2` is the default shell for the app. `App.tsx` handles only the public share routes; every other path (including `/`, `/chat`, `/library/*`, `/notes`, `/topics`, `/feed`, `/reports`) renders the shell.
+
+- `AppShellV2.tsx` — root layout; renders `IconRail`, active section view, `UserMenu`, `HelpPopup`, and `CommandPalette`. Enforces admin-only Reports. Wires global shortcuts: Ctrl/Cmd+K (palette), Ctrl/Cmd+B (collapse context column), Ctrl/Cmd+N (context-aware new), `/` (focus search / chat input). Deep-link `/help` opens the help popup and normalizes the URL.
+- `routing.ts` + `hooks/useV2Route.ts` — URL parsing / generation (`V2Route` discriminated union) and state sync with `pushState`/`popstate`. Routes live at the root (e.g. `/chat/:id`, `/library/:tab/:id`, `/notes/:id`, `/topics/:id`, `/feed`, `/reports`).
+- `components/shell/` — shell primitives: `IconRail` (primary nav + theme/help/avatar), `ContextColumn` (collapsible contextual sidebar), `UserMenu` (account popover: usage, plan, sign out, delete), `CommandPalette` (Ctrl/Cmd+K palette with sections + recents + actions), `Placeholder`, `icons.tsx`.
+- `components/chat/` — `ChatView` (uses `useChat` + `streamChatReply` + shared `MessageBubble`/`ChatInput`/`TypingIndicator`/`SaveDialog`), `RecentChatsList`, `CustomizePopover`, `ChatSettings.ts`.
+- `components/library/` — master-detail `LibraryView` with tabs (Conversations / Notes / Topics), `FilterDrawer` (search mode, scope, sort, tags), result cards (`ConversationResultCard`, `NoteResultCard`, `TopicResultCard`), detail panes (`ConversationDetailPane`, `NoteDetailPane`).
+- `components/notes/` — `NotesView` with pinned/recent grouping, tag filter, and the shared `NoteEditor` embedded as the detail pane.
+- `components/topics/` — `TopicsView` with inline progress bars, `TopicDetailPane` (replay / flashcards / export / visibility / share / delete), `TopicProgressStrip`.
+- `components/feed/` — `FeedView` that calls `/api/feed` and `/api/learning-topics/public`.
+- `components/reports/` — `ReportsView` that embeds the admin user and model/cost tables.
+- `hooks/` — `useV2Route`, `useRecentChats`, `useDebounce`.
 
 ## Data Model
 
